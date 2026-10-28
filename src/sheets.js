@@ -10,18 +10,33 @@ const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Urutan prioritas kredensial: service account -> OAuth refresh token -> access token (debug lokal).
+const filled = (v) => typeof v === "string" && v.trim() !== "";
+
 export function createClient(env = process.env) {
   let auth;
-  if (env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-    auth = new GoogleAuth({ credentials: JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON), scopes: SCOPES });
-  } else if (env.GOOGLE_REFRESH_TOKEN) {
+  if (filled(env.GOOGLE_SERVICE_ACCOUNT_JSON)) {
+    let credentials;
+    try {
+      credentials = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    } catch {
+      throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON bukan JSON valid — tempel ulang seluruh isi file key (dari { sampai })");
+    }
+    auth = new GoogleAuth({ credentials, scopes: SCOPES });
+  } else if (filled(env.GOOGLE_REFRESH_TOKEN)) {
     auth = new OAuth2Client(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
     auth.setCredentials({ refresh_token: env.GOOGLE_REFRESH_TOKEN });
-  } else if (env.GOOGLE_ACCESS_TOKEN) {
+  } else if (filled(env.GOOGLE_ACCESS_TOKEN)) {
     auth = new OAuth2Client();
     auth.setCredentials({ access_token: env.GOOGLE_ACCESS_TOKEN });
   } else {
-    throw new Error("Kredensial Google tidak ada: set GOOGLE_SERVICE_ACCOUNT_JSON (atau GOOGLE_REFRESH_TOKEN)");
+    const status = ["GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_REFRESH_TOKEN"]
+      .map((k) => `${k}=${filled(env[k]) ? "terisi" : "KOSONG"}`)
+      .join(", ");
+    throw new Error(
+      `Kredensial Google tidak sampai ke script (${status}). ` +
+      "Cek Settings > Secrets and variables > Actions > tab Secrets > Repository secrets: " +
+      "nama harus persis GOOGLE_SERVICE_ACCOUNT_JSON dan dibuat di repo ini (bukan Variables / Environment secrets).",
+    );
   }
   return sheets({ version: "v4", auth });
 }

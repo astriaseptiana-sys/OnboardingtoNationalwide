@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readSource, withRetry, writeDestination } from "../src/sheets.js";
+import { createClient, readSource, withRetry, writeDestination } from "../src/sheets.js";
 
 // Sheets API palsu: mencatat semua panggilan tulis.
 function fakeApi({ rowCount = 1000, columnCount = 24, otherCells = 5_000_000, getValues } = {}) {
@@ -96,4 +96,17 @@ test("withRetry: coba ulang untuk error sementara lalu berhasil", async () => {
   const v = await withRetry(async () => { if (++n < 3) throw Object.assign(new Error("5xx"), { response: { status: 503 } }); return "ok"; }, "t", 3, 1);
   assert.equal(v, "ok");
   assert.equal(n, 3);
+});
+
+test("createClient: secret kosong -> pesan menyebut variabel mana yang KOSONG", () => {
+  assert.throws(() => createClient({ GOOGLE_SERVICE_ACCOUNT_JSON: "  " }), /GOOGLE_SERVICE_ACCOUNT_JSON=KOSONG.*Repository secrets/);
+});
+
+test("createClient: isi bukan JSON -> pesan jelas", () => {
+  assert.throws(() => createClient({ GOOGLE_SERVICE_ACCOUNT_JSON: "bukan json" }), /bukan JSON valid/);
+});
+
+test("createClient: JSON service account valid -> client dibuat", () => {
+  const api = createClient({ GOOGLE_SERVICE_ACCOUNT_JSON: JSON.stringify({ client_email: "a@b.iam.gserviceaccount.com", private_key: "x" }) });
+  assert.equal(typeof api.spreadsheets.values.get, "function");
 });

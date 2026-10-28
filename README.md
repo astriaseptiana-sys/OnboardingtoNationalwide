@@ -44,7 +44,7 @@ Daftar ID sheet ada di [`src/config.js`](src/config.js).
 
 | Secret | Isi |
 |---|---|
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | isi lengkap file key JSON |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` (atau `ONBOARDING_TO_NATIONALWIDE`, keduanya dibaca) | isi lengkap file key JSON |
 | `SEATALK_WEBHOOK_URL` | URL webhook grup SeaTalk |
 
 Alternatif tanpa service account: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` (OAuth atas nama satu akun pengguna).
