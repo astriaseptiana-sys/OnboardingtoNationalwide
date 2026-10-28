@@ -1,4 +1,4 @@
-name: Sync Success ke Sheet6
+name: Sync Success ke Nationwide
 
 on:
   schedule:
@@ -9,12 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run: baca sumber dan tampilkan laporan, tanpa menulis ke Sheet6"
+        description: "Dry run: baca sumber dan tampilkan laporan, tanpa menulis ke Nationwide"
         type: boolean
         default: false
 
 concurrency:
-  group: sync-sheet6
+  group: sync-nationwide
   cancel-in-progress: false
 
 jobs:

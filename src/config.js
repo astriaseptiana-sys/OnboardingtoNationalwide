@@ -1,5 +1,5 @@
 // Urutan SUMBER sama dengan script Nationwide di Apps Script.
-// `region` = teks yang ditulis ke kolom X di Sheet6 untuk tiap baris dari sumber itu.
+// `region` = teks yang ditulis ke kolom X di Nationwide untuk tiap baris dari sumber itu.
 export const SOURCES = [
   { name: "Jabodetabek & Banten", region: "Region Jabodetabek & Banten", id: "1A6lYvBHt-p637RGfDgpDxlGB4S3Su-y--vM99HRSDLQ" },
   { name: "Sumatera",             region: "Region Sumatera",             id: "1gH4FNSYfTqn8zn-IQwXL-uKm-ZB8MaIqjsRVwFit2S8" },
@@ -13,21 +13,25 @@ export const SOURCE_TAB = "Success";
 export const SOURCE_LAST_COL = "O"; // ambil A:O, mulai row 2
 export const SOURCE_WIDTH = 15;     // jumlah kolom A:O
 
-// Tujuan: BPO Tracker, tab Sheet6. Hanya A:O dan X yang ditulis; P:W tidak disentuh.
+// Tujuan: BPO Tracker, tab Nationwide. Hanya A:O dan X yang ditulis; P:W (rumus ARRAYFORMULA) tidak disentuh.
 export const DEST = {
   spreadsheetId: "14066o_4MxeLbfAyIfMDMF6ExRFzSwlN6HemgDAP0y_0",
-  tab: "Sheet6",
+  tab: "Nationwide",
   dataFirstCol: "A",
   dataLastCol: "O",
   regionCol: "X",
   firstRow: 2,
+  // Tab yang membaca Nationwide lewat formula spill: barisnya harus cukup supaya tidak #REF!
+  // (sama seperti pastikanBarisCukup di script Apps Script lama).
+  companionTabs: [{ tab: "Sort by New", buffer: 1000 }],
 };
 
-// Kolom bertipe tanggal (index 0-based) di A:O, supaya angka serial tampil sebagai tanggal.
+// Format kolom di A:O, disamakan dengan format yang sudah ada di Nationwide (index 0-based).
 export const DATE_COLUMNS = [
-  { index: 0,  type: "DATE",      pattern: "d mmm yyyy" },          // nhe_release
-  { index: 12, type: "DATE_TIME", pattern: "m/d/yyyy h:mm:ss" },    // create_date
-  { index: 13, type: "DATE_TIME", pattern: "m/d/yyyy h:mm:ss" },    // timestamp_req
+  { index: 0,  type: "DATE",      pattern: 'd"-"mmm"-"yyyy' },     // nhe_release
+  { index: 10, type: "NUMBER",    pattern: "0" },                  // id_driver
+  { index: 12, type: "DATE_TIME", pattern: "M/d/yyyy H:mm:ss" },   // create_date
+  { index: 13, type: "DATE_TIME", pattern: "M/d/yyyy H:mm:ss" },   // timestamp_req
 ];
 
 export const MAX_RETRY = 3;

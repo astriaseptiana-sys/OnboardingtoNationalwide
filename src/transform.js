@@ -102,7 +102,7 @@ export function summarize(results, prevCounts) {
 const ICON = { ok: "🟢", anomaly: "🟡", error: "🔴" };
 
 export function buildReport(summary, { finishedAt = new Date(), durationSec, sheetUrl, dryRun = false } = {}) {
-  let t = `📊 Sync Sheet6 BPO Tracker (Success 6 Region)${dryRun ? " — DRY RUN (tidak menulis)" : ""}\n`;
+  let t = `📊 Sync Nationwide BPO Tracker (Success 6 Region)${dryRun ? " — DRY RUN (tidak menulis)" : ""}\n`;
   t += `Status: ${summary.overall}\n`;
   t += `Total baris: ${fmtRibuan(summary.total)} (${summary.totalChange})\n`;
   t += `Update: ${formatWib(finishedAt)} WIB`;
@@ -113,7 +113,7 @@ export function buildReport(summary, { finishedAt = new Date(), durationSec, she
   for (const i of summary.items) {
     t += `${ICON[i.status]} ${i.name}\n`;
     if (i.status === "error") {
-      t += `     GAGAL diambil — dilewati, data region ini TIDAK ikut di Sheet6\n`;
+      t += `     GAGAL diambil — dilewati, data region ini TIDAK ikut di Nationwide\n`;
       t += `     ${String(i.error ?? "").slice(0, 200)}\n\n`;
     } else {
       const share = i.share === null ? "—" : `${fmtPct(i.share)}%`;
@@ -130,10 +130,10 @@ export function buildReport(summary, { finishedAt = new Date(), durationSec, she
 }
 
 export function buildFailureReport(err, { finishedAt = new Date(), runUrl } = {}) {
-  let t = "❌ Sync Sheet6 BPO Tracker GAGAL\n\n";
+  let t = "❌ Sync Nationwide BPO Tracker GAGAL\n\n";
   t += `Error: ${String(err?.message ?? err).slice(0, 500)}\n`;
   t += `Jam: ${formatWib(finishedAt)} WIB\n`;
-  t += "Sheet6 tidak diubah kalau gagal sebelum tahap tulis.";
+  t += "Nationwide tidak diubah kalau gagal sebelum tahap tulis.";
   if (runUrl) t += `\nLog: ${runUrl}`;
   return t;
 }

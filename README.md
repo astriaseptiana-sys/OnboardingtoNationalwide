@@ -1,6 +1,6 @@
 # OnboardingtoNationalwide
 
-Mengambil data tab **Success** (kolom **A:O**, mulai **row 2**) dari 6 spreadsheet Account Creation (BPOM), menggabungkannya, lalu menempelkannya ke tab **Sheet6** di BPO Tracker mulai **row 2**. Kolom **X** diisi nama region sumber setiap baris. Jalan otomatis **3x sehari** lewat GitHub Actions dan mengirim laporan ke SeaTalk.
+Mengambil data tab **Success** (kolom **A:O**, mulai **row 2**) dari 6 spreadsheet Account Creation (BPOM), menggabungkannya, lalu menempelkannya ke tab **Nationwide** di BPO Tracker mulai **row 2**. Kolom **X** diisi nama region sumber setiap baris. Jalan otomatis **3x sehari** lewat GitHub Actions dan mengirim laporan ke SeaTalk.
 
 ## Jadwal
 
@@ -11,7 +11,7 @@ Mengambil data tab **Success** (kolom **A:O**, mulai **row 2**) dari 6 spreadshe
 | 03:00 (dini hari) | `0 20 * * *` |
 
 > GitHub Actions tidak menjamin tepat waktu. Saat beban GitHub tinggi, eksekusi bisa mundur beberapa menit sampai puluhan menit.
-> Bisa dijalankan manual: tab **Actions** → **Sync Success ke Sheet6** → **Run workflow** (ada opsi *dry run* yang hanya membaca dan tidak menulis).
+> Bisa dijalankan manual: tab **Actions** → **Sync Success ke Nationwide** → **Run workflow** (ada opsi *dry run* yang hanya membaca dan tidak menulis).
 
 ## Sumber dan label kolom X
 
@@ -28,13 +28,15 @@ Daftar ID sheet ada di [`src/config.js`](src/config.js).
 
 ## Perilaku
 
-- **Refresh penuh tiap jadwal:** data lama di Sheet6 (A:O dan X) diganti dengan data terbaru dari sumber. Data baru ditulis dulu, baru sisa baris lama dibersihkan, jadi Sheet6 tidak sempat kosong.
-- **Hanya A:O dan X yang ditulis.** Kolom P:W (dan header row 1) tidak disentuh.
-- **Nilai persis seperti sumber:** teks tetap teks (mis. `id_ktp` 16 digit tidak berubah jadi angka), tanggal tetap tanggal. Kolom A, M, N diberi format tanggal.
-- **Satu sumber gagal:** sumber itu dicoba 3x, kalau tetap gagal dilewati dan sumber lain tetap ditulis. Data region yang gagal **tidak ikut** di Sheet6 pada run itu, dan SeaTalk memberi tahu.
-- **Semua sumber gagal / kosong:** Sheet6 tidak ditimpa sama sekali, workflow ditandai gagal, SeaTalk memberi tahu.
+- **Refresh penuh tiap jadwal:** data lama di Nationwide (A:O dan X) diganti dengan data terbaru dari sumber. Data baru ditulis dulu, baru sisa baris lama dibersihkan, jadi Nationwide tidak sempat kosong.
+- **Hanya A:O dan X yang ditulis.** Kolom P:W (rumus `ARRAYFORMULA`) dan header row 1 tidak disentuh.
+- **Nilai persis seperti sumber:** teks tetap teks (mis. `id_ktp` 16 digit tidak berubah jadi angka), tanggal tetap tanggal. Format kolom A, K, M, N disamakan dengan format yang sudah ada di Nationwide.
+- **Tab `Sort by New` ikut dijaga:** barisnya ditambah supaya selalu ≥ jumlah data + 1000, agar formula spill tidak `#REF!` (menggantikan `pastikanBarisCukup` di Apps Script).
+- **Jangan jalankan bersamaan dengan script Apps Script lama** yang juga menulis A:O di tab Nationwide. Matikan trigger `refresh` di Apps Script kalau repo ini dipakai sebagai penggantinya.
+- **Satu sumber gagal:** sumber itu dicoba 3x, kalau tetap gagal dilewati dan sumber lain tetap ditulis. Data region yang gagal **tidak ikut** di Nationwide pada run itu, dan SeaTalk memberi tahu.
+- **Semua sumber gagal / kosong:** Nationwide tidak ditimpa sama sekali, workflow ditandai gagal, SeaTalk memberi tahu.
 - **Laporan SeaTalk tiap run:** status, total baris, perubahan dibanding run sebelumnya (dibaca dari kolom X), rincian per region, dan penanda ⚠️ kalau satu region turun ≥ 30%.
-- **Batas 10 juta sel Google Sheets:** kalau memperbesar Sheet6 akan melewati batas, proses berhenti sebelum menulis dan SeaTalk memberi tahu.
+- **Batas 10 juta sel Google Sheets:** kalau memperbesar Nationwide akan melewati batas, proses berhenti sebelum menulis dan SeaTalk memberi tahu.
 
 ## Setup (sekali saja)
 

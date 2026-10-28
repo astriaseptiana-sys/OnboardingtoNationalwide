@@ -23,7 +23,7 @@ async function main() {
 
   const out = buildOutput(results);
   if (out.rows.length === 0) {
-    throw new Error("Semua sumber gagal atau kosong — Sheet6 tidak ditimpa");
+    throw new Error("Semua sumber gagal atau kosong — Nationwide tidak ditimpa");
   }
 
   // Data run sebelumnya (kolom X) dipakai untuk perbandingan di laporan; gagal baca bukan masalah fatal.
@@ -38,7 +38,7 @@ async function main() {
   if (!dryRun) {
     const written = await writeDestination(api, out);
     gid = written.sheetId;
-    console.log(`Sheet6 selesai ditulis sampai row ${written.lastRow}`);
+    console.log(`Nationwide selesai ditulis sampai row ${written.lastRow}`);
   }
 
   const summary = summarize(results, prevCounts);

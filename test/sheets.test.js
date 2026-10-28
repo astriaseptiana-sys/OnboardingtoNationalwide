@@ -10,7 +10,8 @@ function fakeApi({ rowCount = 1000, columnCount = 24, otherCells = 5_000_000, ge
     spreadsheets: {
       get: async () => ({
         data: { sheets: [
-          { properties: { sheetId: 7, title: "Sheet6", gridProperties: { rowCount, columnCount } } },
+          { properties: { sheetId: 7, title: "Nationwide", gridProperties: { rowCount, columnCount } } },
+          { properties: { sheetId: 8, title: "Sort by New", gridProperties: { rowCount: 1000, columnCount: 23 } } },
           { properties: { sheetId: 1, title: "Lain", gridProperties: { rowCount: otherCells / 10, columnCount: 10 } } },
         ] },
       }),
@@ -36,31 +37,47 @@ test("writeDestination: chunk, hanya A:O dan X, RAW, grid diperbesar, sisa lama 
 
   const grow = api.calls.find((c) => c.op === "sheets.batchUpdate" && c.req.requestBody.requests[0].updateSheetProperties);
   assert.equal(grow.req.requestBody.requests[0].updateSheetProperties.properties.gridProperties.rowCount, 12002 + 500);
+  // tab yang membaca Nationwide lewat formula spill ikut diperbesar (buffer 1000)
+  const sortReq = grow.req.requestBody.requests[1].updateSheetProperties;
+  assert.equal(sortReq.properties.sheetId, 8);
+  assert.equal(sortReq.properties.gridProperties.rowCount, 12002 + 1000);
 
   const writes = api.calls.filter((c) => c.op === "values.batchUpdate");
   assert.equal(writes.length, 3);
-  assert.deepEqual(writes[0].req.requestBody.data.map((d) => d.range), ["'Sheet6'!A2:O5001", "'Sheet6'!X2:X5001"]);
-  assert.deepEqual(writes[2].req.requestBody.data.map((d) => d.range), ["'Sheet6'!A10002:O12002", "'Sheet6'!X10002:X12002"]);
+  assert.deepEqual(writes[0].req.requestBody.data.map((d) => d.range), ["'Nationwide'!A2:O5001", "'Nationwide'!X2:X5001"]);
+  assert.deepEqual(writes[2].req.requestBody.data.map((d) => d.range), ["'Nationwide'!A10002:O12002", "'Nationwide'!X10002:X12002"]);
   for (const w of writes) {
     assert.equal(w.req.requestBody.valueInputOption, "RAW");
     for (const d of w.req.requestBody.data) assert.doesNotMatch(d.range, /!(P|Q|R|S|T|U|V|W)\d/); // P:W tidak disentuh
   }
 
   const clear = api.calls.find((c) => c.op === "values.batchClear");
-  assert.deepEqual(clear.req.requestBody.ranges, ["'Sheet6'!A12003:O", "'Sheet6'!X12003:X"]);
+  assert.deepEqual(clear.req.requestBody.ranges, ["'Nationwide'!A12003:O", "'Nationwide'!X12003:X"]);
 
   // urutan: tulis dulu, bersihkan sisa terakhir
   const ops = api.calls.map((c) => c.op);
   assert.ok(ops.lastIndexOf("values.batchUpdate") < ops.indexOf("values.batchClear"));
 });
 
-test("writeDestination: format tanggal diterapkan ke kolom A, M, N", async () => {
+test("writeDestination: format diterapkan ke kolom A, K, M, N", async () => {
   const api = fakeApi({ rowCount: 5000 });
   await writeDestination(api, makeData(10));
   const fmt = api.calls.find((c) => c.op === "sheets.batchUpdate" && c.req.requestBody.requests[0].repeatCell);
   const cols = fmt.req.requestBody.requests.map((r) => r.repeatCell.range.startColumnIndex);
-  assert.deepEqual(cols, [0, 12, 13]);
+  assert.deepEqual(cols, [0, 10, 12, 13]);
   assert.equal(fmt.req.requestBody.requests[0].repeatCell.range.endRowIndex, 11);
+});
+
+test("writeDestination: kolom rumus P:W dan tab lain tidak ikut ditulis atau dibersihkan", async () => {
+  const api = fakeApi({ rowCount: 20000 });
+  await writeDestination(api, makeData(100));
+  for (const c of api.calls) {
+    const ranges = [
+      ...(c.req?.requestBody?.data ?? []).map((d) => d.range),
+      ...(c.req?.requestBody?.ranges ?? []),
+    ];
+    for (const r of ranges) assert.match(r, /^'Nationwide'!(A\d+:O|X\d+:X)/, r);
+  }
 });
 
 test("writeDestination: lewat batas 10 juta sel -> throw sebelum menulis apa pun", async () => {

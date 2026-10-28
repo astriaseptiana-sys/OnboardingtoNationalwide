@@ -77,12 +77,12 @@ export async function readSource(api, source) {
   }
 }
 
-// Jumlah baris per label di kolom X Sheet6 (hasil run sebelumnya), untuk perbandingan laporan.
+// Jumlah baris per label di kolom X Nationwide (hasil run sebelumnya), untuk perbandingan laporan.
 export async function readPreviousColumn(api) {
   const { spreadsheetId, tab, regionCol, firstRow } = DEST;
   const res = await withRetry(
     () => api.spreadsheets.values.get({ spreadsheetId, range: `'${tab}'!${regionCol}${firstRow}:${regionCol}` }),
-    "Baca kolom X Sheet6",
+    "Baca kolom X Nationwide",
   );
   return res.data.values ?? [];
 }
@@ -93,50 +93,56 @@ async function getDestMeta(api) {
     () => api.spreadsheets.get({ spreadsheetId, fields: "sheets.properties(sheetId,title,gridProperties)" }),
     "Baca metadata BPO Tracker",
   );
-  let target = null;
-  let otherCells = 0;
+  const byTitle = {};
+  let totalCells = 0;
   for (const s of res.data.sheets) {
     const p = s.properties;
-    if (p.title === tab) target = p;
-    else otherCells += p.gridProperties.rowCount * p.gridProperties.columnCount;
+    byTitle[p.title] = { sheetId: p.sheetId, rowCount: p.gridProperties.rowCount, columnCount: p.gridProperties.columnCount };
+    totalCells += p.gridProperties.rowCount * p.gridProperties.columnCount;
   }
+  const target = byTitle[tab];
   if (!target) throw new Error(`Tab '${tab}' tidak ditemukan di BPO Tracker`);
-  return {
-    sheetId: target.sheetId,
-    rowCount: target.gridProperties.rowCount,
-    columnCount: target.gridProperties.columnCount,
-    otherCells,
-  };
+  return { ...target, byTitle, totalCells };
 }
 
-// Tulis data ke Sheet6: A:O + X saja. Data baru ditulis dulu, baru sisa baris lama di bawahnya dibersihkan,
-// jadi Sheet6 tidak sempat kosong. Kolom P:W tidak disentuh.
+// Tulis data ke tab tujuan (Nationwide): A:O + X saja. Data baru ditulis dulu, baru sisa baris lama di bawahnya
+// dibersihkan, jadi tab tidak sempat kosong. Kolom P:W (rumus) tidak disentuh.
 export async function writeDestination(api, { rows, regions }) {
-  const { spreadsheetId, tab, dataFirstCol, dataLastCol, regionCol, firstRow } = DEST;
+  const { spreadsheetId, tab, dataFirstCol, dataLastCol, regionCol, firstRow, companionTabs = [] } = DEST;
   const meta = await getDestMeta(api);
   const lastRow = rows.length + firstRow - 1;
 
-  // 1) Pastikan grid cukup (hanya menambah, tidak pernah mengecilkan)
+  // 1) Pastikan grid cukup (hanya menambah, tidak pernah mengecilkan): tab tujuan + tab yang membaca dari sana
   const needRows = Math.max(meta.rowCount, lastRow + ROW_BUFFER);
   const needCols = Math.max(meta.columnCount, colIndex(regionCol) + 1);
+  const growth = [];
   if (needRows > meta.rowCount || needCols > meta.columnCount) {
-    const cellsAfter = meta.otherCells + needRows * needCols;
+    growth.push({ label: tab, sheetId: meta.sheetId, rowCount: needRows, columnCount: needCols, before: meta.rowCount * meta.columnCount });
+  }
+  for (const c of companionTabs) {
+    const t = meta.byTitle[c.tab];
+    if (!t) { console.warn(`Tab pendamping '${c.tab}' tidak ditemukan — dilewati`); continue; }
+    const rc = Math.max(t.rowCount, lastRow + c.buffer);
+    if (rc > t.rowCount) growth.push({ label: c.tab, sheetId: t.sheetId, rowCount: rc, columnCount: t.columnCount, before: t.rowCount * t.columnCount });
+  }
+  if (growth.length) {
+    const cellsAfter = meta.totalCells + growth.reduce((a, g) => a + g.rowCount * g.columnCount - g.before, 0);
     if (cellsAfter > CELL_LIMIT) {
       throw new Error(
         `Batas ${CELL_LIMIT.toLocaleString("en-US")} sel spreadsheet terlewati ` +
-        `(butuh ${cellsAfter.toLocaleString("en-US")}). Sheet6 tidak ditimpa — hapus tab/baris tak terpakai di BPO Tracker.`,
+        `(butuh ${cellsAfter.toLocaleString("en-US")}). ${tab} tidak ditimpa — hapus tab/baris tak terpakai di BPO Tracker.`,
       );
     }
     await withRetry(() => api.spreadsheets.batchUpdate({
       spreadsheetId,
-      requestBody: { requests: [{
+      requestBody: { requests: growth.map((g) => ({
         updateSheetProperties: {
-          properties: { sheetId: meta.sheetId, gridProperties: { rowCount: needRows, columnCount: needCols } },
+          properties: { sheetId: g.sheetId, gridProperties: { rowCount: g.rowCount, columnCount: g.columnCount } },
           fields: "gridProperties.rowCount,gridProperties.columnCount",
         },
-      }] },
-    }), "Perbesar grid Sheet6");
-    meta.rowCount = needRows;
+      })) },
+    }), `Perbesar grid ${growth.map((g) => g.label).join(", ")}`);
+    if (growth[0].label === tab) meta.rowCount = needRows;
   }
 
   // 2) Tulis per chunk. RAW = nilai persis seperti sumber (id_ktp tetap teks, tanggal tetap angka serial).
@@ -153,7 +159,7 @@ export async function writeDestination(api, { rows, regions }) {
           { range: `'${tab}'!${regionCol}${r1}:${regionCol}${r2}`, values: regions.slice(start, end) },
         ],
       },
-    }), `Tulis Sheet6 baris ${r1}-${r2}`);
+    }), `Tulis Nationwide baris ${r1}-${r2}`);
     console.log(`  ditulis baris ${r1}-${r2}`);
   }
 
