@@ -1,0 +1,19 @@
+{
+  "name": "onboarding-to-nationwide",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gabung tab Success dari 6 sheet Account Creation (BPOM) ke Sheet6 BPO Tracker, 3x sehari",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "sync": "node src/sync.js",
+    "dry-run": "node src/sync.js --dry-run",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@googleapis/sheets": "^18.1.1",
+    "google-auth-library": "^11.3.1"
+  }
+}

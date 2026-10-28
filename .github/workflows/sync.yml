@@ -1,0 +1,42 @@
+name: Sync Success ke Sheet6
+
+on:
+  schedule:
+    # Cron GitHub memakai UTC. WIB = UTC+7.
+    - cron: "0 2 * * *"   # 09:00 WIB
+    - cron: "0 5 * * *"   # 12:00 WIB
+    - cron: "0 20 * * *"  # 03:00 WIB (dini hari)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: baca sumber dan tampilkan laporan, tanpa menulis ke Sheet6"
+        type: boolean
+        default: false
+
+concurrency:
+  group: sync-sheet6
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Jalankan sync
+        run: node src/sync.js
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          SEATALK_WEBHOOK_URL: ${{ secrets.SEATALK_WEBHOOK_URL }}
