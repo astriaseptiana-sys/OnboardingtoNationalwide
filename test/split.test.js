@@ -65,10 +65,42 @@ test("buildPanel: empat baris Jabo dari Sumber_Region, total dari semua label te
   const r = splitResult(jabo(["Anyar Hub", "Anyar Hub", "Babakan Madang Hub", "Babelan 2 Hub", "Cengkareng 3 Hub", "Hub Baru"]), hubMap, REGION_SPLIT);
   const s = summarize([r], null);
   const p = buildPanel(s, { sheetCounts: { "Region West Jabo": 2, "Region South Jabo": 1, "Region East Jabo": 1, "Region North Jabo": 1, "Region Jabodetabek & Banten": 1 } });
-  assert.deepEqual(Object.keys(p.regions), ["West Jabo", "South Jabo", "East Jabo", "North Jabo"]);
+  assert.deepEqual(Object.keys(p.regions), ["West Jabo", "South Jabo", "East Jabo", "North Jabo", "Total Jabo"]);
   assert.equal(p.regions["West Jabo"].rows, 2);
   assert.equal(p.total, 6);
   assert.equal(p.status.text, "⚠️ PERLU DICEK — 1 baris Jabo belum terpetakan");
+});
+
+test("summarize: Total Jabo = semua baris sumber termasuk tak terpetakan; dibandingkan dengan Jabodetabek gabungan run lama", () => {
+  const r = splitResult(jabo(["Anyar Hub", "Anyar Hub", "Babakan Madang Hub", "Hub Baru"]), hubMap, REGION_SPLIT);
+  const s = summarize([r], { "Region Jabodetabek & Banten": 5 }); // run lama: label gabungan
+  assert.equal(s.groups.length, 1);
+  const g = s.groups[0];
+  assert.equal(g.name, "Total Jabo");
+  assert.equal(g.count, 4);                // 2 + 1 + 0 + 0 + 1 tak terpetakan
+  assert.equal(g.change, "-1 (-20,0%)");   // vs 5, bukan baseline
+  assert.equal(g.status, "anomaly");        // ada 1 hub tak terpetakan
+  assert.equal(g.afterRegion, "Region North Jabo");
+  const rep = buildReport(s);
+  assert.ok(rep.indexOf("North Jabo") < rep.indexOf("Total Jabo")); // subtotal tepat setelah pecahan terakhir
+  assert.ok(rep.includes("4 baris"));
+});
+
+test("summarize: Total Jabo dari sumber gagal -> error; tanpa sumber pecahan -> tidak ada group", () => {
+  assert.equal(summarize([splitResult(jabo([], false), hubMap, REGION_SPLIT)], null).groups[0].status, "error");
+  const plain = { name: "Jateng", region: "Region Jateng", ok: true, rows: [row("x")], dropped: 0 };
+  assert.deepEqual(summarize([plain], null).groups, []);
+});
+
+test("buildPanel: Total Jabo dari jumlah label di Sumber_Region (4 pecahan + label sumber); selisih -> Tidak sinkron", () => {
+  const r = splitResult(jabo(["Anyar Hub", "Anyar Hub", "Babakan Madang Hub", "Hub Baru"]), hubMap, REGION_SPLIT);
+  const s = summarize([r], null);
+  const ok = buildPanel(s, { sheetCounts: { "Region West Jabo": 2, "Region South Jabo": 1, "Region Jabodetabek & Banten": 1 } });
+  assert.equal(ok.regions["Total Jabo"].rows, 4);
+  assert.equal(ok.regions["Total Jabo"].pct, 1);
+  const bad = buildPanel(s, { sheetCounts: { "Region West Jabo": 2, "Region South Jabo": 1 } }); // baris tak terpetakan hilang
+  assert.equal(bad.regions["Total Jabo"].status, "⚠️ Tidak sinkron");
+  assert.equal(bad.regions["Total Jabo"].change, "Sheet 3 ≠ sumber 4");
 });
 
 test("readRegionMap: hanya region yang dipecah, nama hub huruf kecil", async () => {

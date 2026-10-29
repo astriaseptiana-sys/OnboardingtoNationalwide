@@ -1,4 +1,6 @@
-import { ANOMALY_DROP, TZ } from "./config.js";
+import { ANOMALY_DROP, REGION_SPLIT, TZ } from "./config.js";
+
+const totalName = REGION_SPLIT.totalName;
 
 export const fmtRibuan = (x) => Math.round(x).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 const fmtPct = (x) => (x * 100).toFixed(1).replace(".", ",");
@@ -120,11 +122,34 @@ export function summarize(results, prevCounts) {
   });
   const unmapped = results.reduce((a, r) => a + (r.split?.unmapped ?? 0), 0);
 
+  // Subtotal untuk sumber yang dipecah (mis. Total Jabo): seluruh baris sumber itu, termasuk yang belum terpetakan.
+  // Pembandingnya = jumlah label pecahan + label sumber asli di run sebelumnya, jadi run pertama setelah pemecahan
+  // dibandingkan dengan angka Jabodetabek gabungan, bukan "baseline".
+  const groups = results.filter((r) => r.split).map((r) => {
+    const labels = [...r.split.labels.map((l) => l.region), r.region];
+    const prev = labels.reduce((a, l) => a + (prevCounts?.[l] ?? 0), 0);
+    const count = r.ok ? r.rows.length : null;
+    let status = "ok";
+    if (!r.ok) status = "error";
+    else if ((prev > 0 && (count - prev) / prev <= -ANOMALY_DROP) || r.split.unmapped > 0) status = "anomaly";
+    return {
+      name: totalName,
+      source: r.name,
+      labels,
+      afterRegion: r.split.labels[r.split.labels.length - 1].region,
+      status,
+      count,
+      share: r.ok && total > 0 ? count / total : null,
+      change: r.ok ? changeText(count, prev) : "-",
+      error: r.error ?? null,
+    };
+  });
+
   let overall = "✅ SUKSES";
   if (items.some((i) => i.status === "error")) overall = "⚠️ SEBAGIAN GAGAL";
   else if (unmapped > 0 || items.some((i) => i.status === "anomaly")) overall = "⚠️ PERLU DICEK";
 
-  return { items, total, prevTotal, totalChange: changeText(total, prevTotal), overall, unmapped };
+  return { items, groups, total, prevTotal, totalChange: changeText(total, prevTotal), overall, unmapped };
 }
 
 const ICON = { ok: "🟢", anomaly: "🟡", error: "🔴" };
@@ -151,6 +176,16 @@ export function buildReport(summary, { finishedAt = new Date(), durationSec, she
       t += `     ${fmtRibuan(i.count)} baris  |  ${share} dari total  |  ${i.change}\n`;
       if (i.status === "anomaly") t += `     ⚠️ Turun >= ${ANOMALY_DROP * 100}% dari run sebelumnya\n`;
       t += "\n";
+    }
+    // Subtotal (mis. Total Jabo) tepat setelah baris pecahan terakhirnya
+    for (const g of (summary.groups ?? []).filter((x) => x.afterRegion === i.region)) {
+      t += `${ICON[g.status]} ${g.name}\n`;
+      if (g.status === "error") {
+        t += `     GAGAL diambil — seluruh ${g.source} tidak ikut di Nationwide\n\n`;
+      } else {
+        const share = g.share === null ? "—" : `${fmtPct(g.share)}%`;
+        t += `     ${fmtRibuan(g.count)} baris  |  ${share} dari total  |  ${g.change}\n\n`;
+      }
     }
   }
 

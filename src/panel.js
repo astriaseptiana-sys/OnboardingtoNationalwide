@@ -53,9 +53,16 @@ export function buildPanel(summary, { finishedAt = new Date(), sheetCounts = nul
   // Total = seluruh baris berlabel di Sumber_Region (termasuk baris Jabo yang belum terpetakan)
   const total = sheetCounts ? Object.values(sheetCounts).reduce((a, b) => a + b, 0) : summary.total;
 
+  // Subtotal (mis. Total Jabo): jumlah label pecahan + label sumber asli di Sumber_Region
+  const groups = (summary.groups ?? []).map((g) => {
+    if (!sheetCounts || g.status === "error") return { ...g, rows: g.count };
+    const rows = g.labels.reduce((a, l) => a + (sheetCounts[l] ?? 0), 0);
+    return { ...g, rows, status: rows !== g.count ? "mismatch" : g.status, expected: g.count };
+  });
+
   const hasError = items.some((i) => i.status === "error");
   const unmapped = summary.unmapped ?? 0;
-  const hasAnomaly = unmapped > 0 || items.some((i) => i.status === "anomaly" || i.status === "mismatch");
+  const hasAnomaly = unmapped > 0 || [...items, ...groups].some((i) => i.status === "anomaly" || i.status === "mismatch");
   const overallKey = hasError ? "error" : hasAnomaly ? "anomaly" : "ok";
   const overall = hasError ? "❌ ADA ERROR" : hasAnomaly ? "⚠️ PERLU DICEK" : "✅ All STABLE";
 
@@ -71,6 +78,18 @@ export function buildPanel(summary, { finishedAt = new Date(), sheetCounts = nul
       change,
       status: REGION_STATUS[i.status],
       ...COLORS[i.status],
+    };
+  }
+  for (const g of groups) {
+    let change = g.change;
+    if (g.status === "error") change = `Tidak terambil: ${String(g.error ?? "gagal").slice(0, 70)}`;
+    else if (g.status === "mismatch") change = `Sheet ${fmt(g.rows)} ≠ sumber ${fmt(g.expected)}`;
+    regions[g.name] = {
+      rows: g.rows === null ? "—" : g.rows,
+      pct: g.rows === null || total <= 0 ? "" : g.rows / total,
+      change,
+      status: REGION_STATUS[g.status],
+      ...COLORS[g.status],
     };
   }
   const failedNames = items.filter((i) => i.status === "error").map((i) => i.name);

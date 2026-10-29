@@ -16,6 +16,7 @@ export const REGION_SPLIT = {
   mapTab: "Region",
   hubIndex: 9, // nama_hub = kolom J di A:O
   regions: ["West Jabo", "South Jabo", "East Jabo", "North Jabo"],
+  totalName: "Total Jabo", // baris subtotal (semua baris sumber, termasuk hub yang belum terpetakan)
 };
 
 export const SOURCE_TAB = "Success";
