@@ -1,7 +1,7 @@
 import { sheets } from "@googleapis/sheets";
 import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import {
-  CELL_LIMIT, CHUNK_ROWS, DATE_COLUMNS, DEST, LOG_TAB, MAX_RETRY, RETRY_DELAY_MS, ROW_BUFFER,
+  CELL_LIMIT, CHUNK_ROWS, DATE_COLUMNS, DEST, LOG_TAB, MAX_RETRY, REGION_SPLIT, RETRY_DELAY_MS, ROW_BUFFER,
   SOURCE_LAST_COL, SOURCE_TAB, SOURCE_WIDTH, WRITE_RETRY_DELAYS_MS, WRITE_TIMEOUT_MS,
 } from "./config.js";
 import { cleanRows, colIndex } from "./transform.js";
@@ -95,12 +95,28 @@ export async function readSource(api, source) {
   }
 }
 
+// Peta nama hub (huruf kecil) -> region untuk region yang dipecah, dari tab Region di BPO Tracker.
+export async function readRegionMap(api, split = REGION_SPLIT) {
+  const res = await withRetry(
+    () => api.spreadsheets.values.get({ spreadsheetId: DEST.spreadsheetId, range: `'${split.mapTab}'!A2:B` }, { timeout: 180_000 }),
+    `Baca peta hub tab ${split.mapTab}`,
+  );
+  const wanted = new Set(split.regions);
+  const map = new Map();
+  for (const r of res.data.values ?? []) {
+    const hub = String(r[0] ?? "").trim().toLowerCase();
+    const region = String(r[1] ?? "").trim();
+    if (hub && wanted.has(region)) map.set(hub, region);
+  }
+  return map;
+}
+
 // Jumlah baris per label di kolom X Nationwide (hasil run sebelumnya), untuk perbandingan laporan.
 export async function readPreviousColumn(api) {
   const { spreadsheetId, tab, regionCol, firstRow } = DEST;
   const res = await withRetry(
-    () => api.spreadsheets.values.get({ spreadsheetId, range: `'${tab}'!${regionCol}${firstRow}:${regionCol}` }),
-    "Baca kolom X Nationwide",
+    () => api.spreadsheets.values.get({ spreadsheetId, range: `'${tab}'!${regionCol}${firstRow}:${regionCol}` }, { timeout: 180_000 }),
+    "Baca kolom Sumber_Region Nationwide",
   );
   return res.data.values ?? [];
 }

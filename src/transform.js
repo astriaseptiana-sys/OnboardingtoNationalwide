@@ -40,18 +40,40 @@ export function cleanRows(rawRows, width) {
   return { rows, dropped };
 }
 
-// Gabung baris semua sumber yang sukses; kolom X diisi nama region sumbernya.
+// Gabung baris semua sumber yang sukses; kolom X diisi nama region sumbernya
+// (atau label hasil pecahan per hub kalau sumbernya dipecah, mis. Jabodetabek -> West/South/East/North Jabo).
 export function buildOutput(results) {
   const rows = [];
   const regions = [];
   for (const r of results) {
     if (!r.ok) continue;
-    for (const row of r.rows) {
-      rows.push(row);
-      regions.push([r.region]);
+    for (let i = 0; i < r.rows.length; i++) {
+      rows.push(r.rows[i]);
+      regions.push([r.rowLabels ? r.rowLabels[i] : r.region]);
     }
   }
   return { rows, regions };
+}
+
+const normHub = (s) => String(s ?? "").trim().toLowerCase();
+
+// Pecah satu sumber menjadi beberapa label berdasarkan nama hub (kolom J) -> region di tab Region.
+// Hub yang tidak ada di peta tetap memakai label sumber aslinya dan dihitung sebagai `unmapped`.
+export function splitResult(result, hubMap, split) {
+  const labels = split.regions.map((n) => ({ name: n, region: `Region ${n}`, count: 0 }));
+  if (!result.ok) return { ...result, split: { labels, unmapped: 0 } };
+  const byName = Object.fromEntries(labels.map((l) => [l.name, l]));
+  let unmapped = 0;
+  const rowLabels = result.rows.map((row) => {
+    const reg = hubMap?.get(normHub(row[split.hubIndex]));
+    if (reg && byName[reg]) {
+      byName[reg].count++;
+      return byName[reg].region;
+    }
+    unmapped++;
+    return result.region;
+  });
+  return { ...result, rowLabels, split: { labels, unmapped } };
 }
 
 // Hitung jumlah baris per label region dari isi kolom X (values.get -> [[label], ...]).
@@ -75,28 +97,34 @@ export function summarize(results, prevCounts) {
   const prevTotal = prevCounts ? Object.values(prevCounts).reduce((a, b) => a + b, 0) : 0;
   const total = results.reduce((a, r) => a + (r.ok ? r.rows.length : 0), 0);
 
-  const items = results.map((r) => {
-    const prev = prevCounts?.[r.region] ?? 0;
+  // Sumber yang dipecah (r.split) menghasilkan satu item per label; yang lain satu item per sumber.
+  const entries = results.flatMap((r) => (r.split
+    ? r.split.labels.map((l, idx) => ({ name: l.name, region: l.region, ok: r.ok, count: r.ok ? l.count : null, dropped: idx === 0 ? r.dropped : 0, error: r.error }))
+    : [{ name: r.name, region: r.region, ok: r.ok, count: r.ok ? r.rows.length : null, dropped: r.dropped, error: r.error }]));
+
+  const items = entries.map((e) => {
+    const prev = prevCounts?.[e.region] ?? 0;
     let status = "ok";
-    if (!r.ok) status = "error";
-    else if (prev > 0 && (r.rows.length - prev) / prev <= -ANOMALY_DROP) status = "anomaly";
+    if (!e.ok) status = "error";
+    else if (prev > 0 && (e.count - prev) / prev <= -ANOMALY_DROP) status = "anomaly";
     return {
-      name: r.name,
-      region: r.region,
+      name: e.name,
+      region: e.region,
       status,
-      count: r.ok ? r.rows.length : null,
-      share: r.ok && total > 0 ? r.rows.length / total : null,
-      change: r.ok ? changeText(r.rows.length, prev) : "-",
-      dropped: r.dropped ?? 0,
-      error: r.error ?? null,
+      count: e.count,
+      share: e.ok && total > 0 ? e.count / total : null,
+      change: e.ok ? changeText(e.count, prev) : "-",
+      dropped: e.dropped ?? 0,
+      error: e.error ?? null,
     };
   });
+  const unmapped = results.reduce((a, r) => a + (r.split?.unmapped ?? 0), 0);
 
   let overall = "✅ SUKSES";
   if (items.some((i) => i.status === "error")) overall = "⚠️ SEBAGIAN GAGAL";
-  else if (items.some((i) => i.status === "anomaly")) overall = "⚠️ PERLU DICEK";
+  else if (unmapped > 0 || items.some((i) => i.status === "anomaly")) overall = "⚠️ PERLU DICEK";
 
-  return { items, total, prevTotal, totalChange: changeText(total, prevTotal), overall };
+  return { items, total, prevTotal, totalChange: changeText(total, prevTotal), overall, unmapped };
 }
 
 const ICON = { ok: "🟢", anomaly: "🟡", error: "🔴" };
@@ -128,6 +156,9 @@ export function buildReport(summary, { finishedAt = new Date(), durationSec, she
 
   t += "----------------------------------------\n";
   t += `TOTAL: ${fmtRibuan(summary.total)} baris  |  ${summary.totalChange}\n`;
+  if (summary.unmapped > 0) {
+    t += `⚠️ ${fmtRibuan(summary.unmapped)} baris Jabo dengan hub yang belum ada di tab Region (tetap berlabel region sumbernya)\n`;
+  }
   if (sheetUrl) t += `\nSheet: ${sheetUrl}`;
   if (rerunUrl && summary.items.some((i) => i.status === "error")) t += rerunLine(rerunUrl);
   return t;

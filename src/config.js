@@ -9,6 +9,15 @@ export const SOURCES = [
   { name: "Jabar",                region: "Region Jabar",                id: "1LFLA2GNuybH68m1AhuUDRxuU0tuVE7qikV7PCN_FBew" },
 ];
 
+// Sumber yang dipecah per hub: kolom Sumber_Region (X) berisi "Region West Jabo", "Region South Jabo", dst.
+// Peta hub -> region dibaca dari tab Region di BPO Tracker (kolom A = Station Name, kolom B = For Nationwide).
+export const REGION_SPLIT = {
+  source: "Jabodetabek & Banten",
+  mapTab: "Region",
+  hubIndex: 9, // nama_hub = kolom J di A:O
+  regions: ["West Jabo", "South Jabo", "East Jabo", "North Jabo"],
+};
+
 export const SOURCE_TAB = "Success";
 export const SOURCE_LAST_COL = "O"; // ambil A:O, mulai row 2
 export const SOURCE_WIDTH = 15;     // jumlah kolom A:O

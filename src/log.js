@@ -31,6 +31,7 @@ export function successEntry(summary, rowCount, { attempt = 1, date } = {}) {
   const notes = [];
   if (failed.length) notes.push(`Region gagal diambil: ${failed.map((i) => `${i.name} (${String(i.error ?? "").slice(0, 80)})`).join(", ")}`);
   if (dropped.length) notes.push(`Turun >= 30%: ${dropped.map((i) => i.name).join(", ")}`);
+  if (summary.unmapped > 0) notes.push(`${summary.unmapped} baris Jabo belum terpetakan ke West/South/East/North`);
   if (attempt > 1) notes.push(`berhasil di percobaan ke-${attempt}`);
   return buildLogRow({ date, status: failed.length ? "⚠️ SEBAGIAN" : "✅ SUKSES", rows: rowCount, note: notes.join("; ") });
 }

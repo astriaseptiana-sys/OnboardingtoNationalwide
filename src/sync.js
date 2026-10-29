@@ -1,8 +1,9 @@
-import { ATTEMPT_PAUSE_MS, DEST, MAX_ATTEMPTS, SOURCES } from "./config.js";
+import { ATTEMPT_PAUSE_MS, DEST, MAX_ATTEMPTS, REGION_SPLIT, SOURCES } from "./config.js";
 import { sendSeaTalk } from "./seatalk.js";
 import { failureEntry, successEntry } from "./log.js";
-import { appendLogRow, createClient, readPreviousColumn, readSource, writeDestination } from "./sheets.js";
-import { buildFailureReport, buildOutput, buildReport, fmtRibuan, summarize, tallyRegions } from "./transform.js";
+import { buildPanel, setPanelBusy, setPanelError, updateControlPanel } from "./panel.js";
+import { appendLogRow, createClient, readPreviousColumn, readRegionMap, readSource, writeDestination } from "./sheets.js";
+import { buildFailureReport, buildOutput, buildReport, fmtRibuan, splitResult, summarize, tallyRegions } from "./transform.js";
 
 const dryRun = process.argv.includes("--dry-run") || process.env.DRY_RUN === "true";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -21,6 +22,7 @@ function rerunUrl() {
 
 async function runOnce(attempt) {
   const api = createClient();
+  if (!dryRun) await setPanelBusy(api); // indikator "Sedang Diproses..." di Control Panel
 
   // Baca 6 sumber paralel; satu sumber gagal tidak menghentikan yang lain.
   const results = await Promise.all(SOURCES.map((s) => readSource(api, s)));
@@ -28,7 +30,19 @@ async function runOnce(attempt) {
     console.log(r.ok ? `✅ ${r.name}: ${fmtRibuan(r.rows.length)} baris (${r.dropped} baris kosong dilewati)` : `❌ ${r.name}: ${r.error}`);
   }
 
-  const out = buildOutput(results);
+  // Pecah sumber Jabodetabek per hub (West/South/East/North Jabo). Peta gagal dibaca -> tetap sync dengan label
+  // sumber asli; semua baris Jabo terhitung "belum terpetakan" dan muncul sebagai peringatan di laporan.
+  let hubMap = null;
+  if (results.some((r) => r.name === REGION_SPLIT.source && r.ok)) {
+    try {
+      hubMap = await readRegionMap(api);
+      console.log(`Peta hub dibaca: ${hubMap.size} hub untuk ${REGION_SPLIT.regions.join(", ")}`);
+    } catch (e) {
+      console.warn(`⚠️ Peta hub tab ${REGION_SPLIT.mapTab} gagal dibaca: ${e.message}`);
+    }
+  }
+  const resolved = results.map((r) => (r.name === REGION_SPLIT.source ? splitResult(r, hubMap, REGION_SPLIT) : r));
+  const out = buildOutput(resolved);
   if (out.rows.length === 0) {
     throw new Error("Semua sumber gagal atau kosong — Nationwide tidak ditimpa");
   }
@@ -48,7 +62,7 @@ async function runOnce(attempt) {
     console.log(`Nationwide selesai ditulis sampai row ${written.lastRow}`);
   }
 
-  const summary = summarize(results, prevCounts);
+  const summary = summarize(resolved, prevCounts);
   const report = buildReport(summary, {
     durationSec: Math.round((Date.now() - t0) / 1000),
     sheetUrl: `https://docs.google.com/spreadsheets/d/${DEST.spreadsheetId}/edit${gid != null ? `#gid=${gid}` : ""}`,
@@ -61,6 +75,16 @@ async function runOnce(attempt) {
     console.log("::warning::Ada sumber yang gagal diambil — lihat laporan di atas");
   }
   if (!dryRun) {
+    // Angka Control Panel diambil dari kolom Sumber_Region di Nationwide (dibaca ulang setelah ditulis);
+    // kalau gagal dibaca, panel memakai hitungan sync.
+    let sheetCounts = null;
+    try {
+      sheetCounts = tallyRegions(await readPreviousColumn(api));
+      console.log("Sumber_Region di Nationwide:", JSON.stringify(sheetCounts));
+    } catch (e) {
+      console.warn(`⚠️ Tidak bisa baca ulang Sumber_Region, panel memakai hitungan sync: ${e.message}`);
+    }
+    await updateControlPanel(api, buildPanel(summary, { sheetCounts }));
     await appendLogRow(api, successEntry(summary, out.rows.length, { attempt }));
     await sendSeaTalk(report);
   }
@@ -86,7 +110,9 @@ async function main() {
   }
   if (!dryRun) {
     try {
-      await appendLogRow(createClient(), failureEntry(lastErr, { attempts: maxAttempts }));
+      const api = createClient();
+      await setPanelError(api);
+      await appendLogRow(api, failureEntry(lastErr, { attempts: maxAttempts }));
     } catch (e) {
       console.warn(`⚠️ Tidak bisa mencatat kegagalan ke tab LOG: ${e.message}`);
     }
