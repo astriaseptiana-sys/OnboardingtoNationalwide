@@ -36,6 +36,7 @@ Daftar ID sheet ada di [`src/config.js`](src/config.js).
 - **Satu sumber gagal:** sumber itu dicoba 3x, kalau tetap gagal dilewati dan sumber lain tetap ditulis. Data region yang gagal **tidak ikut** di Nationwide pada run itu, dan SeaTalk memberi tahu.
 - **Semua sumber gagal / kosong:** Nationwide tidak ditimpa sama sekali, workflow ditandai gagal, SeaTalk memberi tahu.
 - **Laporan SeaTalk tiap run:** status, total baris, perubahan dibanding run sebelumnya (dibaca dari kolom X), rincian per region, dan penanda ⚠️ kalau satu region turun ≥ 30%.
+- **Tab `LOG` di BPO Tracker:** tiap sync (bukan dry run) menyisipkan satu baris di paling atas dengan format yang sama seperti log Apps Script lama: `Waktu | Window | Status | Baris | Keterangan`. Status: `✅ SUKSES`, `⚠️ SEBAGIAN` (ada region gagal, nama dan alasannya di Keterangan), atau `❌ GAGAL` (alasan di Keterangan). Kalau mencatat log gagal, sync tidak ikut gagal.
 - **Batas 10 juta sel Google Sheets:** kalau memperbesar Nationwide akan melewati batas, proses berhenti sebelum menulis dan SeaTalk memberi tahu.
 
 ## Setup (sekali saja)

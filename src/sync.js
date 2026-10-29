@@ -1,6 +1,7 @@
 import { ATTEMPT_PAUSE_MS, DEST, MAX_ATTEMPTS, SOURCES } from "./config.js";
 import { sendSeaTalk } from "./seatalk.js";
-import { createClient, readPreviousColumn, readSource, writeDestination } from "./sheets.js";
+import { failureEntry, successEntry } from "./log.js";
+import { appendLogRow, createClient, readPreviousColumn, readSource, writeDestination } from "./sheets.js";
 import { buildFailureReport, buildOutput, buildReport, fmtRibuan, summarize, tallyRegions } from "./transform.js";
 
 const dryRun = process.argv.includes("--dry-run") || process.env.DRY_RUN === "true";
@@ -18,7 +19,7 @@ function rerunUrl() {
   return GITHUB_REPOSITORY ? `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/sync.yml` : undefined;
 }
 
-async function runOnce() {
+async function runOnce(attempt) {
   const api = createClient();
 
   // Baca 6 sumber paralel; satu sumber gagal tidak menghentikan yang lain.
@@ -59,7 +60,10 @@ async function runOnce() {
   if (summary.items.some((i) => i.status === "error")) {
     console.log("::warning::Ada sumber yang gagal diambil — lihat laporan di atas");
   }
-  if (!dryRun) await sendSeaTalk(report);
+  if (!dryRun) {
+    await appendLogRow(api, successEntry(summary, out.rows.length, { attempt }));
+    await sendSeaTalk(report);
+  }
 }
 
 // Seluruh sync diulang sekali kalau gagal (menimpa penuh, jadi aman diulang).
@@ -69,7 +73,7 @@ async function main() {
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await runOnce();
+      await runOnce(attempt);
       return;
     } catch (err) {
       lastErr = err;
@@ -78,6 +82,13 @@ async function main() {
         console.log(`Mencoba ulang dalam ${ATTEMPT_PAUSE_MS / 1000} dtk...`);
         await sleep(ATTEMPT_PAUSE_MS);
       }
+    }
+  }
+  if (!dryRun) {
+    try {
+      await appendLogRow(createClient(), failureEntry(lastErr, { attempts: maxAttempts }));
+    } catch (e) {
+      console.warn(`⚠️ Tidak bisa mencatat kegagalan ke tab LOG: ${e.message}`);
     }
   }
   if (!dryRun) await sendSeaTalk(buildFailureReport(lastErr, { runUrl: runUrl(), attempts: maxAttempts, rerunUrl: rerunUrl() }));

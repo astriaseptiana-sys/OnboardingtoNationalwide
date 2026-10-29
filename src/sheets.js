@@ -1,7 +1,7 @@
 import { sheets } from "@googleapis/sheets";
 import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import {
-  CELL_LIMIT, CHUNK_ROWS, DATE_COLUMNS, DEST, MAX_RETRY, RETRY_DELAY_MS, ROW_BUFFER,
+  CELL_LIMIT, CHUNK_ROWS, DATE_COLUMNS, DEST, LOG_TAB, MAX_RETRY, RETRY_DELAY_MS, ROW_BUFFER,
   SOURCE_LAST_COL, SOURCE_TAB, SOURCE_WIDTH, WRITE_RETRY_DELAYS_MS, WRITE_TIMEOUT_MS,
 } from "./config.js";
 import { cleanRows, colIndex } from "./transform.js";
@@ -121,6 +121,35 @@ async function getDestMeta(api) {
   const target = byTitle[tab];
   if (!target) throw new Error(`Tab '${tab}' tidak ditemukan di BPO Tracker`);
   return { ...target, byTitle, totalCells };
+}
+
+// Sisipkan satu baris di paling atas tab LOG (di bawah header), format kolom diwarisi dari baris di bawahnya.
+// Tidak pernah throw: gagal mencatat log tidak boleh menggagalkan sync.
+export async function appendLogRow(api, row) {
+  const { spreadsheetId } = DEST;
+  try {
+    const sheetId = await withRetry(async () => {
+      const res = await api.spreadsheets.get({ spreadsheetId, fields: "sheets.properties(sheetId,title)" });
+      const s = res.data.sheets.find((x) => x.properties.title === LOG_TAB);
+      if (!s) throw Object.assign(new Error(`Tab '${LOG_TAB}' tidak ditemukan`), { status: 404 });
+      return s.properties.sheetId;
+    }, "Cari tab LOG");
+
+    const cell = (v) => (typeof v === "number" ? { userEnteredValue: { numberValue: v } }
+      : v === "" || v == null ? {} : { userEnteredValue: { stringValue: String(v) } });
+
+    await withRetry(() => api.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [
+        { insertDimension: { range: { sheetId, dimension: "ROWS", startIndex: 1, endIndex: 2 }, inheritFromBefore: false } },
+        { updateCells: { start: { sheetId, rowIndex: 1, columnIndex: 0 }, rows: [{ values: row.map(cell) }], fields: "userEnteredValue" } },
+      ] },
+    }, { timeout: 60_000 }), "Tulis baris LOG");
+    return true;
+  } catch (e) {
+    console.warn(`⚠️ Gagal mencatat ke tab ${LOG_TAB}: ${e.message}`);
+    return false;
+  }
 }
 
 // Tulis data ke tab tujuan (Nationwide): A:O + X saja. Data baru ditulis dulu, baru sisa baris lama di bawahnya
