@@ -76,6 +76,17 @@ export class PartialWriteError extends Error {
 const makeWriteRetry = (delays) => (fn, label) => withRetry(fn, label, delays.length + 1, delays);
 const writeOpts = { timeout: WRITE_TIMEOUT_MS };
 
+// Penulisan kecil (LOG, Control Panel) tepat setelah penulisan data besar: Google masih menghitung ulang rumus,
+// jadi dipakai retry dan batas waktu yang sama sabarnya dengan penulisan data.
+export const retryLong = makeWriteRetry(WRITE_RETRY_DELAYS_MS);
+export const longOpts = writeOpts;
+
+// Pesan error ringkas untuk laporan: kode HTTP + pesan.
+export function describeError(e) {
+  const status = httpStatus(e);
+  return `${status ? `HTTP ${status}: ` : ""}${String(e?.message ?? e).slice(0, 160)}`;
+}
+
 // Baca Success!A2:O dari satu sumber. Tidak pernah throw: hasil ditandai ok true/false.
 export async function readSource(api, source) {
   try {
@@ -84,7 +95,7 @@ export async function readSource(api, source) {
         spreadsheetId: source.id,
         range: `'${SOURCE_TAB}'!A2:${SOURCE_LAST_COL}`,
         valueRenderOption: "UNFORMATTED_VALUE", // tipe asli: teks tetap teks, tanggal = angka serial
-      });
+      }, { timeout: 120_000 }); // batas waktu: satu sumber yang macet tidak boleh menggantung seluruh run
       return res.data.values ?? [];
     }, `Baca '${source.name}'`);
     const { rows, dropped } = cleanRows(rawRows, SOURCE_WIDTH);
@@ -144,8 +155,8 @@ async function getDestMeta(api) {
 export async function appendLogRow(api, row) {
   const { spreadsheetId } = DEST;
   try {
-    const sheetId = await withRetry(async () => {
-      const res = await api.spreadsheets.get({ spreadsheetId, fields: "sheets.properties(sheetId,title)" });
+    const sheetId = await retryLong(async () => {
+      const res = await api.spreadsheets.get({ spreadsheetId, fields: "sheets.properties(sheetId,title)" }, longOpts);
       const s = res.data.sheets.find((x) => x.properties.title === LOG_TAB);
       if (!s) throw Object.assign(new Error(`Tab '${LOG_TAB}' tidak ditemukan`), { status: 404 });
       return s.properties.sheetId;
@@ -154,17 +165,17 @@ export async function appendLogRow(api, row) {
     const cell = (v) => (typeof v === "number" ? { userEnteredValue: { numberValue: v } }
       : v === "" || v == null ? {} : { userEnteredValue: { stringValue: String(v) } });
 
-    await withRetry(() => api.spreadsheets.batchUpdate({
+    await retryLong(() => api.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: { requests: [
         { insertDimension: { range: { sheetId, dimension: "ROWS", startIndex: 1, endIndex: 2 }, inheritFromBefore: false } },
         { updateCells: { start: { sheetId, rowIndex: 1, columnIndex: 0 }, rows: [{ values: row.map(cell) }], fields: "userEnteredValue" } },
       ] },
-    }, { timeout: 60_000 }), "Tulis baris LOG");
-    return true;
+    }, longOpts), "Tulis baris LOG");
+    return { ok: true };
   } catch (e) {
     console.warn(`⚠️ Gagal mencatat ke tab ${LOG_TAB}: ${e.message}`);
-    return false;
+    return { ok: false, error: describeError(e) };
   }
 }
 

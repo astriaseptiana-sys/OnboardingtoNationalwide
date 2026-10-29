@@ -57,7 +57,7 @@ test("appendLogRow: sisip baris 2 mewarisi format baris di bawahnya, lalu isi ni
     batchUpdate: async (req) => { calls.push(req.requestBody.requests); return {}; },
   } };
   const row = [46323.87, "Siang", "✅ SUKSES", 124641, ""];
-  assert.equal(await appendLogRow(api, row), true);
+  assert.deepEqual(await appendLogRow(api, row), { ok: true });
   const [insert, update] = calls[0];
   assert.deepEqual(insert.insertDimension.range, { sheetId: 99, dimension: "ROWS", startIndex: 1, endIndex: 2 });
   assert.equal(insert.insertDimension.inheritFromBefore, false);
@@ -73,5 +73,7 @@ test("appendLogRow: sisip baris 2 mewarisi format baris di bawahnya, lalu isi ni
 
 test("appendLogRow: tab LOG tidak ada -> false, tidak throw", async () => {
   const api = { spreadsheets: { get: async () => ({ data: { sheets: [{ properties: { sheetId: 5, title: "Nationwide" } }] } }) } };
-  assert.equal(await appendLogRow(api, [1, "a", "b", 0, ""]), false);
+  const res = await appendLogRow(api, [1, "a", "b", 0, ""]);
+  assert.equal(res.ok, false);
+  assert.ok(res.error.includes("HTTP 404") && res.error.includes("tidak ditemukan"));
 });

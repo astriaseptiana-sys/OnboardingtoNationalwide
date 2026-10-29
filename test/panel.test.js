@@ -78,7 +78,9 @@ const place = (reqs) => reqs.map((r) => `${"ABCDEFGHI"[r.updateCells.start.colum
 test("updateControlPanel: kartu status, baris region berdasarkan nama, TOTAL; baris yang bukan sumber tidak disentuh", async () => {
   const api = fakeApi({ names });
   const s = summarize([mk("Jabodetabek & Banten", 10), mk("Jateng", 5)], null);
-  assert.equal(await updateControlPanel(api, buildPanel(s)), true);
+  const res = await updateControlPanel(api, buildPanel(s));
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.missing, []); // semua nama region ada di kolom B panel
 
   assert.equal(api.calls[0].req.range, "'Control Panel'!B13:B26");
   const cells = place(api.calls.find((c) => c.op === "batch").reqs);
@@ -102,9 +104,30 @@ test("updateControlPanel: warna hanya di sel Status (F) dan B9, persen kosong un
   assert.equal(by.C18.rows[0].values[0].userEnteredValue.stringValue, "—");
 });
 
+test("updateControlPanel: nama region yang tidak ada di panel dilaporkan sebagai missing (bukan gagal diam-diam)", async () => {
+  const api = fakeApi({ names: ["Jateng", "TOTAL"] });
+  const s = summarize([mk("Jateng", 5), mk("Jabar", 5)], null);
+  const res = await updateControlPanel(api, buildPanel(s));
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.missing, ["Jabar"]);
+});
+
+test("buildReport dan buildFailureReport memuat peringatan penulisan LOG/panel", async () => {
+  const { buildReport, buildFailureReport } = await import("../src/transform.js");
+  const s = summarize([mk("Jateng", 5)], null);
+  const rep = buildReport(s, { warnings: ["Tab LOG gagal dicatat (HTTP 503: timeout)", "Control Panel gagal diisi (HTTP 429: quota)"] });
+  assert.ok(rep.includes("⚠️ Tab LOG gagal dicatat (HTTP 503: timeout)"));
+  assert.ok(rep.includes("⚠️ Control Panel gagal diisi (HTTP 429: quota)"));
+  assert.equal(buildReport(s).includes("gagal dicatat"), false);
+  const fail = buildFailureReport(new Error("x"), { warnings: ["Tab LOG gagal dicatat (HTTP 503)"] });
+  assert.ok(fail.includes("⚠️ Tab LOG gagal dicatat (HTTP 503)"));
+});
+
 test("updateControlPanel/setPanelError: gagal menulis tidak throw", async () => {
   const api = fakeApi({ names, failBatch: true });
   const s = summarize([mk("Jateng", 5)], null);
-  assert.equal(await updateControlPanel(api, buildPanel(s)), false);
-  assert.equal(await setPanelError(api), false);
+  const a = await updateControlPanel(api, buildPanel(s));
+  assert.equal(a.ok, false);
+  assert.ok(a.error.includes("HTTP 403") && a.error.includes("boom")); // alasan ikut dikembalikan untuk laporan
+  assert.equal((await setPanelError(api)).ok, false);
 });

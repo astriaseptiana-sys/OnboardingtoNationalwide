@@ -1,6 +1,6 @@
 import { DEST } from "./config.js";
 import { toSheetSerial } from "./log.js";
-import { withRetry } from "./sheets.js";
+import { describeError, longOpts, retryLong } from "./sheets.js";
 
 // Tab "Control Panel" di BPO Tracker. Hanya NILAI sel yang diisi (dan warna status), struktur tidak diubah.
 // Layout sama dengan yang diisi script Apps Script lama:
@@ -125,7 +125,7 @@ function cellRequest(sheetId, row, colLetter, v, { fg, bg } = {}) {
 }
 
 async function sheetIdOfPanel(api) {
-  const res = await api.spreadsheets.get({ spreadsheetId: DEST.spreadsheetId, fields: "sheets.properties(sheetId,title)" });
+  const res = await api.spreadsheets.get({ spreadsheetId: DEST.spreadsheetId, fields: "sheets.properties(sheetId,title)" }, longOpts);
   const s = res.data.sheets.find((x) => x.properties.title === PANEL.tab);
   if (!s) throw Object.assign(new Error(`Tab '${PANEL.tab}' tidak ditemukan`), { status: 404 });
   return s.properties.sheetId;
@@ -134,15 +134,15 @@ async function sheetIdOfPanel(api) {
 // Hanya status sistem (B9): "Sedang Diproses..." saat mulai, atau "Error" kalau gagal. Tidak pernah throw.
 export async function setPanelStatus(api, text, fg) {
   try {
-    const sheetId = await withRetry(() => sheetIdOfPanel(api), "Cari tab Control Panel");
-    await withRetry(() => api.spreadsheets.batchUpdate({
+    const sheetId = await retryLong(() => sheetIdOfPanel(api), "Cari tab Control Panel");
+    await retryLong(() => api.spreadsheets.batchUpdate({
       spreadsheetId: DEST.spreadsheetId,
       requestBody: { requests: [cellRequest(sheetId, PANEL.status.row, PANEL.status.col, text, { fg })] },
-    }, { timeout: 60_000 }), "Set status Control Panel");
-    return true;
+    }, longOpts), "Set status Control Panel");
+    return { ok: true };
   } catch (e) {
     console.warn(`⚠️ Gagal set status Control Panel: ${e.message}`);
-    return false;
+    return { ok: false, error: describeError(e) };
   }
 }
 export const setPanelBusy = (api) => setPanelStatus(api, "🔄 Sedang Diproses...", COLORS.busy.fg);
@@ -153,11 +153,11 @@ export const setPanelError = (api) => setPanelStatus(api, "❌ Error — cek LOG
 export async function updateControlPanel(api, panel) {
   const { spreadsheetId } = DEST;
   try {
-    const sheetId = await withRetry(() => sheetIdOfPanel(api), "Cari tab Control Panel");
-    const res = await withRetry(() => api.spreadsheets.values.get({
+    const sheetId = await retryLong(() => sheetIdOfPanel(api), "Cari tab Control Panel");
+    const res = await retryLong(() => api.spreadsheets.values.get({
       spreadsheetId,
       range: `'${PANEL.tab}'!${PANEL.nameCol}${PANEL.scanFrom}:${PANEL.nameCol}${PANEL.scanTo}`,
-    }, { timeout: 60_000 }), "Baca nama region Control Panel");
+    }, longOpts), "Baca nama region Control Panel");
     const rowOf = {};
     (res.data.values ?? []).forEach((r, i) => {
       const name = String(r[0] ?? "").trim();
@@ -184,10 +184,10 @@ export async function updateControlPanel(api, panel) {
     addRow(PANEL.totalName, panel.totalRow);
     if (missing.length) console.warn(`⚠️ Tidak ketemu di Control Panel: ${missing.join(", ")}`);
 
-    await withRetry(() => api.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }, { timeout: 60_000 }), "Isi Control Panel");
-    return true;
+    await retryLong(() => api.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }, longOpts), "Isi Control Panel");
+    return { ok: true, missing };
   } catch (e) {
     console.warn(`⚠️ Gagal mengisi Control Panel: ${e.message}`);
-    return false;
+    return { ok: false, error: describeError(e) };
   }
 }
