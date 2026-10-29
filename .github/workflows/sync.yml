@@ -20,7 +20,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60   # penulisan ±8-11 menit; sync diulang sekali kalau gagal
     steps:
       - uses: actions/checkout@v4
 

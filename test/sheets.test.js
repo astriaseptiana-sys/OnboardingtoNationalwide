@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createClient, readSource, withRetry, writeDestination } from "../src/sheets.js";
+import { createClient, PartialWriteError, readSource, withRetry, writeDestination } from "../src/sheets.js";
+import { buildFailureReport } from "../src/transform.js";
 
 // Sheets API palsu: mencatat semua panggilan tulis.
 function fakeApi({ rowCount = 1000, columnCount = 24, otherCells = 5_000_000, getValues } = {}) {
@@ -126,4 +127,36 @@ test("createClient: isi bukan JSON -> pesan jelas", () => {
 test("createClient: JSON service account valid -> client dibuat", () => {
   const api = createClient({ GOOGLE_SERVICE_ACCOUNT_JSON: JSON.stringify({ client_email: "a@b.iam.gserviceaccount.com", private_key: "x" }) });
   assert.equal(typeof api.spreadsheets.values.get, "function");
+});
+
+test("withRetry: jeda bisa berupa array per percobaan", async () => {
+  let n = 0;
+  const v = await withRetry(async () => { if (++n < 4) throw Object.assign(new Error("503"), { response: { status: 503 } }); return "ok"; }, "t", 4, [1, 1, 1]);
+  assert.equal(v, "ok");
+  assert.equal(n, 4);
+});
+
+test("writeDestination: chunk kedua gagal terus -> PartialWriteError dengan posisi baris terakhir yang sudah baru", async () => {
+  const api = fakeApi({ rowCount: 50000 });
+  let writes = 0;
+  const orig = api.spreadsheets.values.batchUpdate;
+  api.spreadsheets.values.batchUpdate = async (req, opts) => {
+    writes++;
+    assert.equal(opts.timeout, 180000); // batas waktu per request dipasang
+    if (writes >= 2) throw Object.assign(new Error("Service unavailable"), { response: { status: 503 } });
+    return orig(req);
+  };
+  await assert.rejects(
+    () => writeDestination(api, makeData(12001), { retryDelays: [1, 1] }),
+    (e) => e instanceof PartialWriteError && e.writtenUntilRow === 5001 && e.message.includes("baris 5002-10001 (HTTP 503)"),
+  );
+  assert.equal(writes, 1 + 3); // chunk 1 sukses, chunk 2 dicoba 3x (1 + 2 retry)
+});
+
+test("buildFailureReport: laporan sebagian terupdate dan jumlah percobaan", () => {
+  const err = new PartialWriteError("Gagal menulis baris 5002-10001 (HTTP 503): x", 5001);
+  const text = buildFailureReport(err, { attempts: 2 });
+  assert.match(text, /Sudah dicoba 2x/);
+  assert.ok(text.includes("SEBAGIAN terupdate: baris 2-5.001"));
+  assert.match(buildFailureReport(new PartialWriteError("x", 1)), /belum diubah/);
 });

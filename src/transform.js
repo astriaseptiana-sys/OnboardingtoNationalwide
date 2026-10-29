@@ -129,11 +129,20 @@ export function buildReport(summary, { finishedAt = new Date(), durationSec, she
   return t;
 }
 
-export function buildFailureReport(err, { finishedAt = new Date(), runUrl } = {}) {
+export function buildFailureReport(err, { finishedAt = new Date(), runUrl, attempts } = {}) {
   let t = "❌ Sync Nationwide BPO Tracker GAGAL\n\n";
   t += `Error: ${String(err?.message ?? err).slice(0, 500)}\n`;
+  if (attempts > 1) t += `Sudah dicoba ${attempts}x.\n`;
   t += `Jam: ${formatWib(finishedAt)} WIB\n`;
-  t += "Nationwide tidak diubah kalau gagal sebelum tahap tulis.";
+  const upTo = err?.writtenUntilRow;
+  if (upTo > 1) {
+    t += `⚠️ Nationwide SEBAGIAN terupdate: baris 2-${fmtRibuan(upTo)} sudah data baru, sisanya masih data lama. ` +
+      "Total per region sementara tidak akurat sampai sync berikutnya sukses.";
+  } else if (upTo === 1) {
+    t += "Nationwide belum diubah (gagal di potongan tulis pertama).";
+  } else {
+    t += "Nationwide tidak diubah kalau gagal sebelum tahap tulis.";
+  }
   if (runUrl) t += `\nLog: ${runUrl}`;
   return t;
 }
