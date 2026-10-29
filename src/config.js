@@ -46,5 +46,6 @@ export const ATTEMPT_PAUSE_MS = 30_000;
 export const CHUNK_ROWS = 5000;      // baris per request tulis
 export const ROW_BUFFER = 500;       // baris cadangan di bawah data
 export const CELL_LIMIT = 10_000_000; // batas sel per spreadsheet Google Sheets
+export const NOTIFY_EMAILS = ["astria.septiana@spxexpress.com"]; // di-mention di setiap notifikasi SeaTalk
 export const ANOMALY_DROP = 0.30;    // region turun >= 30% dibanding run sebelumnya
 export const TZ = "Asia/Jakarta";

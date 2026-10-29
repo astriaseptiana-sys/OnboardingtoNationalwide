@@ -101,7 +101,10 @@ export function summarize(results, prevCounts) {
 
 const ICON = { ok: "🟢", anomaly: "🟡", error: "🔴" };
 
-export function buildReport(summary, { finishedAt = new Date(), durationSec, sheetUrl, dryRun = false } = {}) {
+const rerunLine = (rerunUrl) =>
+  `\n\n🔁 Silakan run ulang di sini: ${rerunUrl}\n   (klik "Run workflow", biarkan "Dry run" tidak dicentang, lalu klik tombol hijau "Run workflow")`;
+
+export function buildReport(summary, { finishedAt = new Date(), durationSec, sheetUrl, dryRun = false, rerunUrl } = {}) {
   let t = `📊 Sync Nationwide BPO Tracker (Success 6 Region)${dryRun ? " — DRY RUN (tidak menulis)" : ""}\n`;
   t += `Status: ${summary.overall}\n`;
   t += `Total baris: ${fmtRibuan(summary.total)} (${summary.totalChange})\n`;
@@ -126,10 +129,11 @@ export function buildReport(summary, { finishedAt = new Date(), durationSec, she
   t += "----------------------------------------\n";
   t += `TOTAL: ${fmtRibuan(summary.total)} baris  |  ${summary.totalChange}\n`;
   if (sheetUrl) t += `\nSheet: ${sheetUrl}`;
+  if (rerunUrl && summary.items.some((i) => i.status === "error")) t += rerunLine(rerunUrl);
   return t;
 }
 
-export function buildFailureReport(err, { finishedAt = new Date(), runUrl, attempts } = {}) {
+export function buildFailureReport(err, { finishedAt = new Date(), runUrl, attempts, rerunUrl } = {}) {
   let t = "❌ Sync Nationwide BPO Tracker GAGAL\n\n";
   t += `Error: ${String(err?.message ?? err).slice(0, 500)}\n`;
   if (attempts > 1) t += `Sudah dicoba ${attempts}x.\n`;
@@ -144,5 +148,6 @@ export function buildFailureReport(err, { finishedAt = new Date(), runUrl, attem
     t += "Nationwide tidak diubah kalau gagal sebelum tahap tulis.";
   }
   if (runUrl) t += `\nLog: ${runUrl}`;
+  if (rerunUrl) t += rerunLine(rerunUrl);
   return t;
 }

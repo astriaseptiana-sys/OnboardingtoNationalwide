@@ -12,6 +12,12 @@ function runUrl() {
   return GITHUB_RUN_ID ? `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}` : undefined;
 }
 
+// Halaman workflow tempat tombol "Run workflow" berada (GitHub tidak punya link yang langsung menjalankan).
+function rerunUrl() {
+  const { GITHUB_SERVER_URL, GITHUB_REPOSITORY } = process.env;
+  return GITHUB_REPOSITORY ? `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/sync.yml` : undefined;
+}
+
 async function runOnce() {
   const api = createClient();
 
@@ -46,6 +52,7 @@ async function runOnce() {
     durationSec: Math.round((Date.now() - t0) / 1000),
     sheetUrl: `https://docs.google.com/spreadsheets/d/${DEST.spreadsheetId}/edit${gid != null ? `#gid=${gid}` : ""}`,
     dryRun,
+    rerunUrl: rerunUrl(),
   });
   console.log("\n" + report);
 
@@ -73,7 +80,7 @@ async function main() {
       }
     }
   }
-  if (!dryRun) await sendSeaTalk(buildFailureReport(lastErr, { runUrl: runUrl(), attempts: maxAttempts }));
+  if (!dryRun) await sendSeaTalk(buildFailureReport(lastErr, { runUrl: runUrl(), attempts: maxAttempts, rerunUrl: rerunUrl() }));
   process.exit(1);
 }
 
