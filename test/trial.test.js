@@ -110,7 +110,12 @@ function fakeApi({ trialExists = false, sheets } = {}) {
   return {
     calls,
     spreadsheets: {
-      get: async (req) => { calls.push({ op: "get", req }); return { data: { sheets: list.map((s) => ({ ...s, data: [{ columnMetadata: [{ pixelSize: 120 }, { pixelSize: 90 }] }] })) } }; },
+      get: async (req) => {
+        calls.push({ op: "get", req });
+        const fmt = (n) => ({ userEnteredFormat: { numberFormat: { type: "TEXT", pattern: n } } });
+        const grid = { rowData: [{ values: [fmt("hdr0"), fmt("hdr1")] }, { values: [fmt("dat0"), fmt("dat1")] }], columnMetadata: [{ pixelSize: 120 }, { pixelSize: 90 }] };
+        return { data: { sheets: list.map((s) => ({ ...s, data: [grid] })) } };
+      },
       batchUpdate: async (req) => {
         calls.push({ op: "batchUpdate", req });
         const added = req.requestBody.requests.find((r) => r.addSheet);
@@ -159,8 +164,9 @@ test("ensureTrialTab + writeTrialRows: SEMUA penulisan hanya ke tab trial; Natio
   for (const c of api.calls.filter((x) => x.op === "batchUpdate")) {
     for (const rq of c.req.requestBody.requests) {
       if (rq.addSheet) assert.equal(rq.addSheet.properties.title, TRIAL.tab);
-      if (rq.copyPaste) { assert.equal(rq.copyPaste.destination.sheetId, 555); assert.equal(rq.copyPaste.pasteType, "PASTE_FORMAT"); }
+      if (rq.repeatCell) assert.equal(rq.repeatCell.range.sheetId, 555);              // format hanya ke tab trial
       if (rq.updateDimensionProperties) assert.equal(rq.updateDimensionProperties.range.sheetId, 555);
+      assert.ok(!rq.copyPaste, "tidak lagi menyalin jutaan sel");
       assert.ok(!rq.insertDimension && !rq.deleteSheet && !rq.updateCells, "tidak ada operasi lain");
     }
   }

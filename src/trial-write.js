@@ -66,33 +66,34 @@ export async function ensureTrialTab(api, plan, dataRows) {
     spreadsheetId, range: `'${TRIAL.tab}'!A1:${LAST_COL}1`, valueInputOption: "RAW", requestBody: { values: [TRIAL_HEADER] },
   }), "Tulis header tab trial");
 
-  // Format: salin dari Nationwide (header baris 1 -> header, baris 2 -> seluruh baris data). Kosmetik, tidak fatal.
-  if (plan.source) {
-    try {
-      const cp = (srcRow0, srcRow1, dstRow0, dstRow1) => ({ copyPaste: {
-        source: { sheetId: plan.source.sheetId, startRowIndex: srcRow0, endRowIndex: srcRow1, startColumnIndex: 0, endColumnIndex: TRIAL.columns },
-        destination: { sheetId, startRowIndex: dstRow0, endRowIndex: dstRow1, startColumnIndex: 0, endColumnIndex: TRIAL.columns },
-        pasteType: "PASTE_FORMAT", pasteOrientation: "NORMAL",
-      } });
-      await withRetry(() => api.spreadsheets.batchUpdate({
-        spreadsheetId, requestBody: { requests: [cp(0, 1, 0, 1), cp(1, 2, 1, needRows)] },
-      }, { timeout: 120_000 }), "Salin format dari Nationwide", 2, [5000]);
-
-      // Lebar kolom disamakan (hanya membaca metadata kolom Nationwide)
-      const meta = await withRetry(() => api.spreadsheets.get({
-        spreadsheetId, ranges: [`'${TRIAL.formatSourceTab}'!A1:${LAST_COL}1`], includeGridData: true,
-        fields: "sheets(properties(title),data(columnMetadata(pixelSize)))",
-      }), "Baca lebar kolom Nationwide", 2, [5000]);
-      const widths = meta.data.sheets.find((s) => s.properties.title === TRIAL.formatSourceTab)?.data?.[0]?.columnMetadata ?? [];
-      const requests = widths.map((w, i) => ({ updateDimensionProperties: {
-        range: { sheetId, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 }, properties: { pixelSize: w.pixelSize }, fields: "pixelSize",
-      } })).filter((r) => r.updateDimensionProperties.properties.pixelSize);
-      if (requests.length) await withRetry(() => api.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }), "Samakan lebar kolom", 2, [5000]);
-    } catch (e) {
-      warnings.push(`Format tab trial belum rapi (${describeError(e)}); isi data tidak terpengaruh`);
+  // Format: dibaca dari Nationwide (baris 1 = header, baris 2 = contoh sel data) lalu diterapkan PER KOLOM ke tab trial
+  // (satu permintaan kecil per kolom, bukan menyalin jutaan sel). Lebar kolom disamakan. Kosmetik, tidak fatal.
+  try {
+    const meta = await withRetry(() => api.spreadsheets.get({
+      spreadsheetId, ranges: [`'${TRIAL.formatSourceTab}'!A1:${LAST_COL}2`], includeGridData: true,
+      fields: "sheets(properties(title),data(rowData(values(userEnteredFormat)),columnMetadata(pixelSize)))",
+    }), "Baca format Nationwide", 2, [5000]);
+    const grid = meta.data.sheets.find((s) => s.properties.title === TRIAL.formatSourceTab)?.data?.[0];
+    if (!grid) throw new Error(`Tab '${TRIAL.formatSourceTab}' tidak ditemukan untuk membaca format`);
+    const headerFormats = grid.rowData?.[0]?.values ?? [];
+    const dataFormats = grid.rowData?.[1]?.values ?? [];
+    const requests = [];
+    for (let i = 0; i < TRIAL.columns; i++) {
+      const cols = { startColumnIndex: i, endColumnIndex: i + 1 };
+      if (headerFormats[i]?.userEnteredFormat) {
+        requests.push({ repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1, ...cols }, cell: { userEnteredFormat: headerFormats[i].userEnteredFormat }, fields: "userEnteredFormat" } });
+      }
+      if (dataFormats[i]?.userEnteredFormat) { // tanpa endRowIndex = sampai ujung kolom
+        requests.push({ repeatCell: { range: { sheetId, startRowIndex: 1, ...cols }, cell: { userEnteredFormat: dataFormats[i].userEnteredFormat }, fields: "userEnteredFormat" } });
+      }
+      const px = grid.columnMetadata?.[i]?.pixelSize;
+      if (px) requests.push({ updateDimensionProperties: { range: { sheetId, dimension: "COLUMNS", startIndex: i, endIndex: i + 1 }, properties: { pixelSize: px }, fields: "pixelSize" } });
     }
-  } else {
-    warnings.push(`Tab '${TRIAL.formatSourceTab}' tidak ditemukan untuk menyalin format`);
+    if (requests.length) {
+      await withRetry(() => api.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }, { timeout: 120_000 }), "Terapkan format tab trial", 2, [5000]);
+    }
+  } catch (e) {
+    warnings.push(`Format tab trial belum rapi (${describeError(e)}); isi data tidak terpengaruh`);
   }
   return { sheetId, rowCount: needRows, created: true, warnings };
 }
