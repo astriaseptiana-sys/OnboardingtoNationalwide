@@ -105,7 +105,7 @@ test("buildPanel: Total Jabo dari jumlah label di Sumber_Region (4 pecahan + lab
 
 test("readRegionMap: hanya region yang dipecah, nama hub huruf kecil", async () => {
   const api = { spreadsheets: { values: { get: async (req) => {
-    assert.equal(req.range, "'Region'!A2:B");
+    assert.equal(req.range, "'Region'!A2:D"); // A:D: Station Name, For Nationwide, L1, L2 (dipakai juga untuk mode trial)
     return { data: { values: [["Anyar Hub", "West Jabo"], ["Abang Hub", "Bali-Nusra"], [" Babelan 2 Hub ", "East Jabo"], ["", "West Jabo"]] } };
   } } } };
   const m = await readRegionMap(api);

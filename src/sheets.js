@@ -115,20 +115,29 @@ export async function readSource(api, source) {
   }
 }
 
-// Peta nama hub (huruf kecil) -> region untuk region yang dipecah, dari tab Region di BPO Tracker.
-export async function readRegionMap(api, split = REGION_SPLIT, { signal } = {}) {
-  const res = await withRetry(
-    () => api.spreadsheets.values.get({ spreadsheetId: DEST.spreadsheetId, range: `'${split.mapTab}'!A2:B` }, reqOpts(180_000, signal)),
-    `Baca peta hub tab ${split.mapTab}`, MAX_RETRY, RETRY_DELAY_MS, signal,
-  );
+// Peta nama hub (huruf kecil) -> region untuk region yang dipecah, dari baris tab Region (Station Name, For Nationwide, ...).
+export function hubMapFromRows(regionRows, split = REGION_SPLIT) {
   const wanted = new Set(split.regions);
   const map = new Map();
-  for (const r of res.data.values ?? []) {
+  for (const r of regionRows) {
     const hub = String(r[0] ?? "").trim().toLowerCase();
     const region = String(r[1] ?? "").trim();
     if (hub && wanted.has(region)) map.set(hub, region);
   }
   return map;
+}
+
+// Baca tab Region (A:D) dari BPO Tracker: Station Name, For Nationwide, L1 Address, L2 Address.
+export async function readRegionRows(api, split = REGION_SPLIT, { signal } = {}) {
+  const res = await withRetry(
+    () => api.spreadsheets.values.get({ spreadsheetId: DEST.spreadsheetId, range: `'${split.mapTab}'!A2:D` }, reqOpts(180_000, signal)),
+    `Baca tab ${split.mapTab}`, MAX_RETRY, RETRY_DELAY_MS, signal,
+  );
+  return res.data.values ?? [];
+}
+
+export async function readRegionMap(api, split = REGION_SPLIT, { signal } = {}) {
+  return hubMapFromRows(await readRegionRows(api, split, { signal }), split);
 }
 
 // Jumlah baris per label di kolom X Nationwide (hasil run sebelumnya), untuk perbandingan laporan.

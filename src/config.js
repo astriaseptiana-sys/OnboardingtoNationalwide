@@ -59,6 +59,15 @@ export const CHUNK_ROWS = 5000;      // baris per request tulis
 export const ROW_BUFFER = 500;       // baris cadangan di bawah data
 export const CELL_LIMIT = 10_000_000; // batas sel per spreadsheet Google Sheets
 export const LOG_TAB = "LOG"; // riwayat sync, baris terbaru di atas (format sama dengan log Apps Script)
+// Percobaan "Sort by New (Trial)": tab BARU yang ditulis langsung oleh sync (urut terbaru dulu, tanpa rumus).
+// Tab lain (Nationwide, Sort by New, Control Panel, LOG, Region) tidak pernah ditulis oleh mode trial.
+export const TRIAL = {
+  tab: "Sort by New (Trial)",
+  columns: 24,              // A:X, sama dengan header Nationwide
+  reserveCells: 400_000,    // sisa sel yang selalu disisakan di spreadsheet supaya sync produksi tidak kehabisan ruang
+  rowBuffer: 200,           // baris cadangan di bawah data
+  formatSourceTab: "Nationwide", // format kolom dan header disalin dari sini (hanya dibaca)
+};
 export const NOTIFY_EMAILS = ["astria.septiana@spxexpress.com"]; // di-mention di setiap notifikasi SeaTalk
 export const ANOMALY_DROP = 0.30;    // region turun >= 30% dibanding run sebelumnya
 export const TZ = "Asia/Jakarta";
