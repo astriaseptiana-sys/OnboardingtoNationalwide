@@ -6,9 +6,17 @@ import { TRIAL } from "./config.js";
 const DATA_COLS = 15; // A:O = data asli dari sumber; P:X dihitung/ditambahkan sehingga tidak ikut dibandingkan
 const CREATE = 12;    // kolom M = create_date
 
-// Tanda tangan satu baris = seluruh isi A:O (tipe dibedakan: angka vs teks). Angka dibulatkan ke 14 digit signifikan
-// karena bolak-balik lewat Google Sheets bisa mengubah digit ke-16/17.
-const part = (v) => (typeof v === "number" ? `n${Number(v.toPrecision(14))}` : `s${String(v ?? "")}`);
+// Tanda tangan satu baris = seluruh isi A:O. Karena id_driver (K) dan create_date (M) ikut di dalamnya, akun yang
+// BERGABUNG ULANG (orang yang sama dengan id_driver/tanggal baru) otomatis dianggap baris baru dan tetap ditarik.
+// Angka dibulatkan ke 14 digit signifikan karena bolak-balik lewat Google Sheets bisa mengubah digit ke-16/17.
+// Teks yang isinya bilangan bulat biasa (maks 15 digit, tanpa nol di depan) disamakan dengan angkanya, supaya sel yang
+// tipenya berubah di sumber (123456 <-> "123456") tidak dianggap baris baru. id_ktp 16 digit dan nomor ber-nol-depan tetap teks.
+const INTEGER_TEXT = /^(0|[1-9]\d{0,14})$/;
+const part = (v) => {
+  if (typeof v === "number") return `n${Number(v.toPrecision(14))}`;
+  const s = String(v ?? "");
+  return INTEGER_TEXT.test(s) ? `n${Number(s)}` : `s${s}`;
+};
 export function signature(row) {
   const p = new Array(DATA_COLS);
   for (let i = 0; i < DATA_COLS; i++) p[i] = part(row[i] ?? "");

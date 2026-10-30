@@ -18,8 +18,12 @@ const keys = (rows) => rows.map((r) => r[12]);
 test("signature: seluruh A:O, angka dan teks dibedakan, digit ke-16/17 tidak berpengaruh", () => {
   assert.equal(signature(mk(1, 46000.123456789012)), signature(mk(1, 46000.123456789016)));
   assert.notEqual(signature(mk(1, 46000)), signature(mk(2, 46000)));
-  const a = mk(1, 46000); const b = mk(1, 46000); b[10] = "123456"; // angka vs teks
-  assert.notEqual(signature(a), signature(b));
+  const a = mk(1, 46000); const b = mk(1, 46000); b[10] = "123456"; // angka vs teks bilangan bulat biasa = sama
+  assert.equal(signature(a), signature(b));
+  const ktpNum = mk(1, 46000); ktpNum[2] = 3311071702010001; const ktpText = mk(1, 46000); ktpText[2] = "3311071702010001";
+  assert.notEqual(signature(ktpNum), signature(ktpText));                  // 16 digit: tetap dibedakan (tidak aman sebagai angka)
+  const z1 = mk(1, 46000); z1[7] = "087819442664"; const z2 = mk(1, 46000); z2[7] = 87819442664;
+  assert.notEqual(signature(z1), signature(z2));                           // nol di depan: tetap teks
   const c = mk(1, 46000); c[23] = "label lain"; c[16] = 99;       // kolom di luar A:O tidak ikut
   assert.equal(signature(mk(1, 46000)), signature(c));
 });
@@ -192,4 +196,33 @@ test("readTrialRows: baris 15 kolom, baris kosong di ujung dibuang; verifyTrialT
   assert.equal((await verifyTrialTop(fakeApi([[46000]]), 46325.5)).ok, false);
   const broken = { spreadsheets: { values: { get: async () => { throw Object.assign(new Error("x"), { response: { status: 403 } }); } } } };
   assert.equal((await verifyTrialTop(broken, 1)).ok, false);
+});
+
+test("bergabung ulang: orang yang sama tapi id_driver dan/atau tanggal baru = baris BARU yang ditarik; baris identik tidak ditarik lagi", () => {
+  const lama = mk(1, 46003, { driver: 1111111 });
+  const target = [mk(2, 46005, { driver: 2222222 }), lama, mk(3, 46001, { driver: 3333333 })];
+  const rejoin = (patch) => { const r = [...lama]; Object.assign(r, patch); return r; };
+  // data sama (nama, ktp, hub, dst) tetapi id_driver baru + tanggal baru
+  let p = plan([...target, rejoin({ 10: 9999999, 12: 46008, 13: 46007.99 })], target);
+  assert.equal(p.additions.length, 1);
+  assert.equal(p.groups[0].p, 0);                    // paling baru -> row 2
+  // hanya id_driver yang berbeda (tanggal sama dengan baris lama)
+  p = plan([...target, rejoin({ 10: 9999998 })], target);
+  assert.equal(p.additions.length, 1);
+  // hanya tanggal yang berbeda (id sama)
+  p = plan([...target, rejoin({ 12: 46009, 13: 46008.99 })], target);
+  assert.equal(p.additions.length, 1);
+  // dua akun rejoin sekaligus
+  p = plan([...target, rejoin({ 10: 9999997, 12: 46010, 13: 46009.9 }), rejoin({ 10: 9999996, 12: 46011, 13: 46010.9 })], target);
+  assert.equal(p.additions.length, 2);
+  // baris identik tidak ditarik lagi
+  assert.equal(plan(target, target).mode, "none");
+});
+
+test("tipe sel id_driver berubah di sumber (angka <-> teks) tidak dianggap baris baru", () => {
+  const target = [mk(1, 46003, { driver: 123456 }), mk(2, 46002, { driver: 555 })];
+  const table = [mk(1, 46003, { driver: "123456" }), mk(2, 46002, { driver: "555" })];
+  const p = plan(table, target);
+  assert.equal(p.mode, "none");
+  assert.equal(p.stale, 0);
 });
