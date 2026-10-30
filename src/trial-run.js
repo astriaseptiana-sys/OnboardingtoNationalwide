@@ -1,18 +1,26 @@
 // Mode TRIAL (TRIAL=true): isi tab "Sort by New (Trial)" langsung dari sumber, urut terbaru dulu, tanpa rumus.
+// Impor INKREMENTAL: sumber dibandingkan dengan isi tab, dan hanya baris yang BELUM ada di tab yang disisipkan.
+// Tulis ulang penuh hanya untuk tab kosong/baru, kalau diminta (TRIAL_FULL=true), atau kalau perubahannya terlalu besar.
 // Tidak menyentuh Nationwide, Sort by New, Control Panel, LOG, dan tidak mengirim SeaTalk. Hanya log GitHub.
 import { REGION_SPLIT, SOURCES, TRIAL } from "./config.js";
 import { createClient, hubMapFromRows, readRegionRows, readSource } from "./sheets.js";
 import { buildOutput, fmtRibuan, splitResult } from "./transform.js";
 import { buildRegionLookup, buildTrialTable } from "./trial.js";
-import { ensureTrialTab, planTrialTab, writeTrialRows } from "./trial-write.js";
+import { planIncremental } from "./trial-diff.js";
+import { applyIncremental, ensureTrialTab, planTrialTab, readTrialRows, verifyTrialTop, writeTrialRows } from "./trial-write.js";
 
-export async function runTrial({ dryRun = false, maxRowsOverride } = {}) {
+// Serial tanggal Google Sheets (jam dinding WIB) -> teks
+const serialText = (n) => (typeof n === "number"
+  ? new Date(Date.UTC(1899, 11, 30) + Math.round(n * 86400000)).toISOString().slice(0, 19).replace("T", " ")
+  : "-");
+
+export async function runTrial({ dryRun = false, maxRowsOverride, full = false } = {}) {
   const t0 = Date.now();
   const lap = (label) => console.log(`⏱  ${label}: ${((Date.now() - t0) / 1000).toFixed(1)} dtk sejak mulai`);
   const api = createClient();
-  console.log(`TRIAL — tab '${TRIAL.tab}'${dryRun ? " (DRY RUN: tidak menulis apa pun)" : ""}. Tab lain tidak disentuh.`);
+  console.log(`TRIAL — tab '${TRIAL.tab}'${dryRun ? " (DRY RUN: tidak menulis apa pun)" : ""}${full ? " [TULIS ULANG PENUH diminta]" : ""}. Tab lain tidak disentuh.`);
 
-  // 1) Baca 6 sumber (sama dengan sync produksi). Percobaan trial butuh data LENGKAP supaya bisa dibandingkan.
+  // 1) Baca 6 sumber (sama dengan sync produksi). Percobaan trial butuh data LENGKAP supaya perbandingannya benar.
   const results = await Promise.all(SOURCES.map((s) => readSource(api, s)));
   for (const r of results) {
     console.log(r.ok ? `✅ ${r.name}: ${fmtRibuan(r.rows.length)} baris` : `❌ ${r.name}: ${r.error}`);
@@ -28,31 +36,70 @@ export async function runTrial({ dryRun = false, maxRowsOverride } = {}) {
   console.log(`Tab Region dibaca: ${fmtRibuan(regionRows.length)} baris, ${hubMap.size} hub Jabo, ${lookup.size} hub total`);
   lap("tab Region dibaca");
 
-  // 3) Gabung + label Sumber_Region (pecahan Jabo), lalu urutkan dan hitung kolom P:W di kode
+  // 3) Susun seluruh tabel sumber di kode (urut terbaru dulu, kolom P:W dihitung); belum dipotong
   const resolved = results.map((r) => (r.name === REGION_SPLIT.source ? splitResult(r, hubMap, REGION_SPLIT) : r));
   const out = buildOutput(resolved);
+  const table = buildTrialTable(out.rows, out.regions.map((x) => x[0]), lookup);
   const plan = await planTrialTab(api, { maxRowsOverride });
-  const table = buildTrialTable(out.rows, out.regions.map((x) => x[0]), lookup, { maxRows: plan.maxRows });
   const notFound = table.rows.filter((r) => r[20] === "#N/A").length;
   console.log(
-    `Tabel trial: ${fmtRibuan(table.rows.length)} baris dari ${fmtRibuan(table.total)} baris ber-create_date ` +
-    `(${fmtRibuan(out.rows.length - table.total)} baris tanpa create_date dilewati, ${fmtRibuan(table.cut)} baris terlama dipotong karena ruang sel). ` +
-    `Hub tidak ketemu di Region: ${notFound}. Baris teratas create_date: ${table.rows[0]?.[12]}`,
+    `Sumber: ${fmtRibuan(table.total)} baris ber-create_date (${fmtRibuan(out.rows.length - table.total)} tanpa create_date dilewati). ` +
+    `Ruang tab: maksimum ${fmtRibuan(plan.maxRows)} baris. Hub tidak ketemu di Region: ${notFound}.`,
   );
-  lap("tabel disusun di kode");
+  lap("tabel sumber disusun di kode");
+
+  // 4) Bandingkan dengan isi tab (kalau tab sudah ada dan bukan permintaan tulis ulang penuh)
+  let mode = "full";
+  let reason = full ? "diminta (TRIAL_FULL=true)" : "tab trial belum ada";
+  let diff = null;
+  if (!full && plan.trial) {
+    const target = await readTrialRows(api, plan.trial.rowCount);
+    lap(`isi tab trial dibaca (${fmtRibuan(target.length)} baris)`);
+    diff = planIncremental({ table: table.rows, target, maxRows: plan.maxRows });
+    console.log(
+      `PERBANDINGAN — terbaru di sumber: ${serialText(diff.newestSource)} | terbaru di tab: ${serialText(diff.newestTarget)} | ` +
+      `baris sumber di rentang tab: ${fmtRibuan(diff.inWindow ?? 0)} | baris di tab: ${fmtRibuan(diff.targetRows ?? 0)}`,
+    );
+    console.log(
+      `  baris BARU (belum ada di tab): ${fmtRibuan(diff.additions?.length ?? 0)} | di tab tetapi tidak lagi ada/berubah di sumber: ${fmtRibuan(diff.stale ?? 0)}` +
+      (diff.groups?.length ? ` | tersebar di ${diff.groups.length} posisi` : ""),
+    );
+    mode = diff.mode;
+    reason = diff.reason ?? "";
+  }
+  console.log(`KEPUTUSAN: ${mode === "incremental" ? "impor INKREMENTAL (hanya baris baru)" : mode === "none" ? "tidak ada baris baru, tab sudah sama dengan sumber" : `tulis ulang PENUH (${reason})`}`);
 
   if (dryRun) {
     console.log("DRY RUN selesai: tidak ada yang ditulis.");
     return;
   }
 
-  // 4) Pastikan tab ada, tulis seluruh isinya
-  const tab = await ensureTrialTab(api, plan, table.rows.length);
-  console.log(`Tab trial ${tab.created ? "DIBUAT" : "sudah ada"} (grid ${fmtRibuan(tab.rowCount)} baris).`);
+  // 5) Eksekusi
+  if (mode === "none") {
+    if (diff.stale > 0) console.log(`::warning::${diff.stale} baris di tab sudah tidak ada/berubah di sumber; jalankan dengan TRIAL_FULL untuk menyamakan`);
+    lap("SELESAI (tidak ada perubahan)");
+    return;
+  }
+
+  if (mode === "incremental") {
+    const t1 = Date.now();
+    await applyIncremental(api, plan.trial.sheetId, diff, { maxRows: plan.maxRows });
+    const v = await verifyTrialTop(api, diff.newestSource);
+    if (!v.ok) console.log(`::warning::Pemeriksaan baris teratas tab trial tidak lolos (${v.error})`);
+    if (diff.stale > 0) console.log(`::warning::${diff.stale} baris di tab sudah tidak ada/berubah di sumber; jalankan dengan TRIAL_FULL untuk menyamakan`);
+    console.log(`Impor inkremental selesai: ${fmtRibuan(diff.additions.length)} baris baru. Waktu penulisan saja: ${((Date.now() - t1) / 1000).toFixed(1)} dtk.`);
+    lap("SELESAI");
+    return;
+  }
+
+  // mode "full": tab dibuat/diperbesar kalau perlu, lalu isinya ditulis ulang (dipotong sesuai ruang)
+  const capped = table.rows.slice(0, plan.maxRows);
+  const tab = await ensureTrialTab(api, plan, capped.length);
+  console.log(`Tab trial ${tab.created ? "DIBUAT" : "sudah ada"} (grid ${fmtRibuan(tab.rowCount)} baris). ${fmtRibuan(table.rows.length - capped.length)} baris terlama dipotong karena ruang sel.`);
   for (const w of tab.warnings) console.log(`::warning::${w}`);
   lap("tab siap");
   const t1 = Date.now();
-  const { lastRow } = await writeTrialRows(api, table.rows, tab.rowCount);
-  console.log(`Tab trial ditulis sampai row ${fmtRibuan(lastRow)}. Waktu penulisan data saja: ${((Date.now() - t1) / 1000).toFixed(1)} dtk.`);
+  const { lastRow } = await writeTrialRows(api, capped, tab.rowCount);
+  console.log(`Tab trial ditulis penuh sampai row ${fmtRibuan(lastRow)}. Waktu penulisan data saja: ${((Date.now() - t1) / 1000).toFixed(1)} dtk.`);
   lap("SELESAI");
 }

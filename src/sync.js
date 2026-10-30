@@ -146,7 +146,7 @@ async function runOnce(attempt) {
 async function main() {
   if (trialMode) {
     try {
-      await runTrial({ dryRun, maxRowsOverride: Number(process.env.TRIAL_MAX_ROWS) || undefined });
+      await runTrial({ dryRun, maxRowsOverride: Number(process.env.TRIAL_MAX_ROWS) || undefined, full: process.env.TRIAL_FULL === "true" });
       process.exit(0);
     } catch (err) {
       console.error(`❌ Trial gagal: ${err.message}`);

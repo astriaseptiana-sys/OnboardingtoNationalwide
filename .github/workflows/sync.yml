@@ -16,6 +16,10 @@ on:
         description: "TRIAL: hanya isi tab Sort by New (Trial); Nationwide, Sort by New, Control Panel, LOG, SeaTalk tidak disentuh"
         type: boolean
         default: false
+      trial_full:
+        description: "TRIAL + tulis ulang PENUH (biasanya impor hanya baris baru). Dipakai untuk menyamakan tab dengan sumber"
+        type: boolean
+        default: false
 
 concurrency:
   group: sync-nationwide
@@ -40,6 +44,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           TRIAL: ${{ inputs.trial }}
+          TRIAL_FULL: ${{ inputs.trial_full }}
           # Isi file key service account (JSON). Nama secret di repo ini: ONBOARDING_TO_NATIONALWIDE.
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON || secrets.ONBOARDING_TO_NATIONALWIDE }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}

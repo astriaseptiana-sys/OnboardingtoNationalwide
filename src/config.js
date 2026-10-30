@@ -67,6 +67,9 @@ export const TRIAL = {
   reserveCells: 400_000,    // sisa sel yang selalu disisakan di spreadsheet supaya sync produksi tidak kehabisan ruang
   rowBuffer: 200,           // baris cadangan di bawah data
   formatSourceTab: "Nationwide", // format kolom dan header disalin dari sini (hanya dibaca)
+  // Impor inkremental: kalau baris baru terlalu banyak atau tersebar di terlalu banyak posisi, tulis ulang penuh saja.
+  maxAdditions: 8_000, // 8.000 baris x 24 kolom ≈ separuh dari reserveCells, supaya sisipan tidak memakan cadangan sel
+  maxGroups: 40,
 };
 export const NOTIFY_EMAILS = ["astria.septiana@spxexpress.com"]; // di-mention di setiap notifikasi SeaTalk
 export const ANOMALY_DROP = 0.30;    // region turun >= 30% dibanding run sebelumnya

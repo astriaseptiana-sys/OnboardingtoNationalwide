@@ -2,6 +2,7 @@
 // (Nationwide, Sort by New, Control Panel, LOG, Region) hanya dibaca (metadata ukuran dan format sumber salinan).
 import { CELL_LIMIT, CHUNK_ROWS, DEST, TRIAL } from "./config.js";
 import { describeError, retryLong, withRetry } from "./sheets.js";
+import { isBlankRow, normalizeRow } from "./transform.js";
 import { TRIAL_HEADER } from "./trial.js";
 
 const colLetter = (i) => String.fromCharCode(65 + i); // A..X (24 kolom)
@@ -120,4 +121,61 @@ export async function writeTrialRows(api, rows, rowCount) {
     }), "Bersihkan sisa baris lama tab trial");
   }
   return { lastRow };
+}
+
+// ---- impor inkremental: hanya baris baru yang ditulis ----
+
+// Baca isi tab trial (kolom A:O, nilai asli) untuk dibandingkan dengan sumber. Mengembalikan baris 15 kolom.
+export async function readTrialRows(api, rowCount) {
+  const res = await retryLong(() => api.spreadsheets.values.get({
+    spreadsheetId: DEST.spreadsheetId,
+    range: `'${TRIAL.tab}'!A2:O${rowCount}`,
+    valueRenderOption: "UNFORMATTED_VALUE",
+  }, { timeout: 180_000 }), "Baca isi tab trial");
+  const rows = (res.data.values ?? []).map((r) => normalizeRow(r, 15));
+  while (rows.length && isBlankRow(rows[rows.length - 1])) rows.pop();
+  return rows;
+}
+
+const cellValue = (v) => (typeof v === "number" ? { userEnteredValue: { numberValue: v } }
+  : v === "" || v == null ? {} : { userEnteredValue: { stringValue: String(v) } });
+
+// Terapkan rencana inkremental. Tiap kelompok baris baru = SATU batchUpdate atomik (sisip baris + isi nilainya),
+// dikerjakan dari posisi paling bawah ke atas supaya posisi di atasnya tidak bergeser. Setelah itu baris terlama
+// yang melebihi batas ruang dibuang dari bawah. Kalau terhenti di tengah, run berikutnya menghitung ulang selisihnya.
+export async function applyIncremental(api, sheetId, plan, { maxRows }) {
+  const { spreadsheetId } = DEST;
+  for (const g of plan.groups) {
+    const k = g.rows.length;
+    const t0 = Date.now();
+    await retryLong(() => api.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [
+        // p > 0: ikut format baris di atasnya; p = 0: ikut format baris data pertama (jangan mewarisi header)
+        { insertDimension: { range: { sheetId, dimension: "ROWS", startIndex: g.p + 1, endIndex: g.p + 1 + k }, inheritFromBefore: g.p > 0 } },
+        { updateCells: { start: { sheetId, rowIndex: g.p + 1, columnIndex: 0 }, rows: g.rows.map((r) => ({ values: r.map(cellValue) })), fields: "userEnteredValue" } },
+      ] },
+    }), `Sisipkan ${k} baris baru di row ${g.p + 2}`);
+    console.log(`  disisipkan ${k} baris baru di row ${g.p + 2} (${((Date.now() - t0) / 1000).toFixed(1)} dtk)`);
+  }
+  if (plan.overflow > 0) {
+    await retryLong(() => api.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ deleteDimension: { range: { sheetId, dimension: "ROWS", startIndex: maxRows + 1, endIndex: plan.totalAfter + 1 } } }] },
+    }), `Buang ${plan.overflow} baris terlama`);
+    console.log(`  dibuang ${plan.overflow} baris terlama dari bawah (batas ${maxRows} baris)`);
+  }
+}
+
+// Pemeriksaan ringan: create_date di row 2 harus sama dengan yang terbaru di sumber. Tidak pernah throw.
+export async function verifyTrialTop(api, newestKey) {
+  try {
+    const res = await retryLong(() => api.spreadsheets.values.get({
+      spreadsheetId: DEST.spreadsheetId, range: `'${TRIAL.tab}'!M2`, valueRenderOption: "UNFORMATTED_VALUE",
+    }), "Cek baris teratas tab trial");
+    const top = res.data.values?.[0]?.[0];
+    return typeof top === "number" && Math.abs(top - newestKey) < 1e-9 ? { ok: true } : { ok: false, error: `row 2 berisi ${JSON.stringify(top)}, seharusnya ${newestKey}` };
+  } catch (e) {
+    return { ok: false, error: describeError(e) };
+  }
 }
