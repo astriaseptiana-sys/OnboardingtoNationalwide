@@ -7,7 +7,7 @@ import { createClient, hubMapFromRows, readRegionRows, readSource } from "./shee
 import { buildOutput, fmtRibuan, splitResult } from "./transform.js";
 import { buildRegionLookup, buildTrialTable } from "./trial.js";
 import { planIncremental } from "./trial-diff.js";
-import { applyIncremental, ensureTrialTab, planTrialTab, readTrialRows, verifyTrialTop, writeTrialRows } from "./trial-write.js";
+import { applyIncremental, applyTrialFormats, ensureTrialTab, planTrialTab, readTrialRows, verifyTrialTop, writeTrialRows } from "./trial-write.js";
 
 // Serial tanggal Google Sheets (jam dinding WIB) -> teks
 const serialText = (n) => (typeof n === "number"
@@ -75,6 +75,10 @@ export async function runTrial({ dryRun = false, maxRowsOverride, full = false }
   }
 
   // 5) Eksekusi
+  // Format tanggal/SLA dijaga eksplisit di seluruh tab (tidak fatal kalau gagal; hanya tampilan)
+  if (plan.trial) {
+    try { await applyTrialFormats(api, plan.trial.sheetId); } catch (e) { console.log(`::warning::Format tanggal/SLA tab trial gagal (${e.message})`); }
+  }
   if (mode === "none") {
     if (diff.stale > 0) console.log(`::warning::${diff.stale} baris di tab sudah tidak ada/berubah di sumber; jalankan dengan TRIAL_FULL untuk menyamakan`);
     lap("SELESAI (tidak ada perubahan)");

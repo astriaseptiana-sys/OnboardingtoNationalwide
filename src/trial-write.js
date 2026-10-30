@@ -33,6 +33,17 @@ export async function planTrialTab(api, { maxRowsOverride } = {}) {
   return { trial, source, maxRows, othersCells: others };
 }
 
+// Format eksplisit kolom tanggal/angka/SLA untuk SELURUH tab trial (semua baris data, ke bawah tanpa batas).
+// Idempotent dan hanya menyentuh tab trial. Kegagalan hanya berdampak ke tampilan.
+export async function applyTrialFormats(api, sheetId) {
+  const requests = TRIAL.columnFormats.map((c) => ({ repeatCell: {
+    range: { sheetId, startRowIndex: 1, startColumnIndex: c.index, endColumnIndex: c.index + 1 }, // tanpa endRowIndex = sampai ujung kolom
+    cell: { userEnteredFormat: { numberFormat: { type: c.type, pattern: c.pattern } } },
+    fields: "userEnteredFormat.numberFormat",
+  } }));
+  await withRetry(() => api.spreadsheets.batchUpdate({ spreadsheetId: DEST.spreadsheetId, requestBody: { requests } }, { timeout: 120_000 }), "Format tanggal dan SLA tab trial", 2, [5000]);
+}
+
 // Pastikan tab trial ada. Dibuat dengan header yang sama, frozen 1 baris 2 kolom, dan format kolom disalin dari
 // tab Nationwide (hanya dibaca). Pemformatan bersifat kosmetik: gagal = peringatan, bukan kegagalan.
 export async function ensureTrialTab(api, plan, dataRows) {
@@ -95,6 +106,11 @@ export async function ensureTrialTab(api, plan, dataRows) {
     }
   } catch (e) {
     warnings.push(`Format tab trial belum rapi (${describeError(e)}); isi data tidak terpengaruh`);
+  }
+  try {
+    await applyTrialFormats(api, sheetId);
+  } catch (e) {
+    warnings.push(`Format tanggal/SLA tab trial gagal (${describeError(e)}); isi data tidak terpengaruh`);
   }
   return { sheetId, rowCount: needRows, created: true, warnings };
 }

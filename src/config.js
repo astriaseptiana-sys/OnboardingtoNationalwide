@@ -67,6 +67,18 @@ export const TRIAL = {
   reserveCells: 400_000,    // sisa sel yang selalu disisakan di spreadsheet supaya sync produksi tidak kehabisan ruang
   rowBuffer: 200,           // baris cadangan di bawah data
   formatSourceTab: "Nationwide", // format kolom dan header disalin dari sini (hanya dibaca)
+  // Format eksplisit kolom tanggal/angka/SLA di seluruh tab trial (sama dengan tab Sort by New dan Nationwide).
+  // Tidak mengandalkan format sel contoh di Nationwide, karena beberapa kolom (mis. T) tidak punya format eksplisit di sana.
+  columnFormats: [
+    { index: 0,  type: "DATE",      pattern: 'd"-"mmm"-"yyyy' }, // nhe_release
+    { index: 10, type: "NUMBER",    pattern: "0" },              // id_driver
+    { index: 12, type: "DATE_TIME", pattern: "M/d/yyyy H:mm:ss" }, // create_date
+    { index: 13, type: "DATE_TIME", pattern: "M/d/yyyy H:mm:ss" }, // timestamp_req
+    { index: 16, type: "DATE_TIME", pattern: "M/d/yyyy H:mm:ss" }, // timestamp_req (Revise)
+    { index: 17, type: "DATE_TIME", pattern: "M/d/yyyy H:mm:ss" }, // timestamp_req (Final)
+    { index: 18, type: "TIME",      pattern: "[h]:mm:ss" },         // SLA
+    { index: 19, type: "TIME",      pattern: "[h]:mm:ss" },         // SLA (Final)
+  ],
   // Impor inkremental: kalau baris baru terlalu banyak atau tersebar di terlalu banyak posisi, tulis ulang penuh saja.
   maxAdditions: 8_000, // 8.000 baris x 24 kolom ≈ separuh dari reserveCells, supaya sisipan tidak memakan cadangan sel
   maxGroups: 40,

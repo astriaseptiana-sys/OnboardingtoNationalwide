@@ -178,6 +178,23 @@ test("ensureTrialTab + writeTrialRows: SEMUA penulisan hanya ke tab trial; Natio
   assert.equal(api.calls.find((c) => c.op === "clear").req.requestBody.ranges[0], `'${TRIAL.tab}'!A12003:X`);
 });
 
+test("applyTrialFormats: format eksplisit kolom tanggal dan SLA di seluruh tab trial saja (tanpa batas baris bawah)", async () => {
+  const { applyTrialFormats } = await import("../src/trial-write.js");
+  const api = fakeApi();
+  await applyTrialFormats(api, 555);
+  const reqs = api.calls.find((c) => c.op === "batchUpdate").req.requestBody.requests;
+  assert.equal(reqs.length, TRIAL.columnFormats.length);
+  for (const r of reqs) {
+    assert.equal(r.repeatCell.range.sheetId, 555);
+    assert.equal(r.repeatCell.range.startRowIndex, 1);
+    assert.equal("endRowIndex" in r.repeatCell.range, false);   // sampai ujung kolom
+    assert.equal(r.repeatCell.fields, "userEnteredFormat.numberFormat");
+  }
+  const byCol = Object.fromEntries(reqs.map((r) => [r.repeatCell.range.startColumnIndex, r.repeatCell.cell.userEnteredFormat.numberFormat]));
+  assert.deepEqual(byCol[19], { type: "TIME", pattern: "[h]:mm:ss" });      // SLA (Final) = kolom T
+  assert.deepEqual(byCol[16], { type: "DATE_TIME", pattern: "M/d/yyyy H:mm:ss" }); // Q
+});
+
 test("ensureTrialTab: tab sudah ada -> tidak dibuat ulang, hanya diperbesar kalau perlu", async () => {
   const api = fakeApi({ trialExists: true });
   const plan = await planTrialTab(api, { maxRowsOverride: 3000 });
