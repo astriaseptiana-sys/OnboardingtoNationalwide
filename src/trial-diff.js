@@ -35,7 +35,7 @@ export function identity(row) {
   return p.join("");
 }
 
-const keyOf = (row) => {
+export const keyOf = (row) => {
   const m = row[CREATE];
   if (typeof m === "number") return m;
   const n = Number(m);

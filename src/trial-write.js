@@ -141,16 +141,19 @@ export async function writeTrialRows(api, rows, rowCount) {
 
 // ---- impor inkremental: hanya baris baru yang ditulis ----
 
-// Baca isi tab trial (kolom A:O, nilai asli) untuk dibandingkan dengan sumber. Mengembalikan baris 15 kolom.
-export async function readTrialRows(api, rowCount) {
-  const res = await retryLong(() => api.spreadsheets.values.get({
+// Baca isi tab trial: kolom A:O (nilai asli, untuk dibandingkan) dan X (label Sumber_Region) dalam SATU permintaan.
+// Mengembalikan { rows (15 kolom), labels } dengan baris kosong di ujung dibuang.
+export async function readTrialRows(api) {
+  const res = await retryLong(() => api.spreadsheets.values.batchGet({
     spreadsheetId: DEST.spreadsheetId,
-    range: `'${TRIAL.tab}'!A2:O${rowCount}`,
+    ranges: [`'${TRIAL.tab}'!A2:O`, `'${TRIAL.tab}'!X2:X`],
     valueRenderOption: "UNFORMATTED_VALUE",
   }, { timeout: 180_000 }), "Baca isi tab trial");
-  const rows = (res.data.values ?? []).map((r) => normalizeRow(r, 15));
+  const [ao, x] = res.data.valueRanges.map((v) => v.values ?? []);
+  const rows = ao.map((r) => normalizeRow(r, 15));
   while (rows.length && isBlankRow(rows[rows.length - 1])) rows.pop();
-  return rows;
+  const labels = rows.map((_, i) => String(x[i]?.[0] ?? ""));
+  return { rows, labels };
 }
 
 const cellValue = (v) => (typeof v === "number" ? { userEnteredValue: { numberValue: v } }

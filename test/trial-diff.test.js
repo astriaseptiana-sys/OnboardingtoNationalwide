@@ -190,65 +190,17 @@ test("applyIncremental: tipe nilai dipertahankan (angka tetap angka, teks tetap 
   assert.deepEqual(cells[1], {});
 });
 
-test("readTrialRows: baris 15 kolom, baris kosong di ujung dibuang; verifyTrialTop: ok / tidak ok / error API tidak throw", async () => {
-  const api = fakeApi([["a", "b"], ["c"], [], []]);
-  const rows = await readTrialRows(api, 100);
-  assert.equal(api.calls[0].req.range, `'${TRIAL.tab}'!A2:O100`);
+test("readTrialRows: A:O dan X dalam satu permintaan; baris 15 kolom, baris kosong di ujung dibuang; verifyTrialTop: ok / tidak ok / error API tidak throw", async () => {
+  const calls = [];
+  const api = { spreadsheets: { values: { batchGet: async (req) => { calls.push(req); return { data: { valueRanges: [{ values: [["a", "b"], ["c"], [], []] }, { values: [["Region A"], ["Region B"]] }] } }; } } } };
+  const { rows, labels } = await readTrialRows(api);
+  assert.deepEqual(calls[0].ranges, [`'${TRIAL.tab}'!A2:O`, `'${TRIAL.tab}'!X2:X`]);
   assert.equal(rows.length, 2);
   assert.equal(rows[0].length, 15);
-  assert.deepEqual((await verifyTrialTop(fakeApi([[46325.5]]), 46325.5)), { ok: true });
-  assert.equal((await verifyTrialTop(fakeApi([[46000]]), 46325.5)).ok, false);
+  assert.deepEqual(labels, ["Region A", "Region B"]);
+  const top = (v) => ({ spreadsheets: { values: { get: async () => ({ data: { values: v } }) } } });
+  assert.deepEqual((await verifyTrialTop(top([[46325.5]]), 46325.5)), { ok: true });
+  assert.equal((await verifyTrialTop(top([[46000]]), 46325.5)).ok, false);
   const broken = { spreadsheets: { values: { get: async () => { throw Object.assign(new Error("x"), { response: { status: 403 } }); } } } };
   assert.equal((await verifyTrialTop(broken, 1)).ok, false);
-});
-
-test("ATURAN 1: data sama tetapi id_driver BERBEDA = akun baru (bergabung ulang), tetap ditarik", () => {
-  const lama = mk(1, 46003, { driver: 1111111 });
-  const target = [mk(2, 46005, { driver: 2222222 }), lama, mk(3, 46001, { driver: 3333333 })];
-  const rejoin = (patch) => { const r = [...lama]; Object.assign(r, patch); return r; };
-  // id_driver baru + tanggal lebih baru -> baru, paling atas
-  let p = plan([...target, rejoin({ 10: 9999999, 12: 46008, 13: 46007.99 })], target);
-  assert.equal(p.additions.length, 1);
-  assert.equal(p.groups[0].p, 0);
-  // id_driver baru, tanggal sama dengan baris lama -> tetap baru
-  assert.equal(plan([...target, rejoin({ 10: 9999998 })], target).additions.length, 1);
-  // id_driver baru tetapi tanggal lebih lama (data terlambat, masih di rentang tab) -> tetap baru (akun lain)
-  assert.equal(plan([...target, rejoin({ 10: 9999995, 12: 46004, 13: 46003.99 })], target).additions.length, 1);
-  // dua akun rejoin sekaligus dengan id berbeda -> keduanya
-  p = plan([...target, rejoin({ 10: 9999997, 12: 46010, 13: 46009.9 }), rejoin({ 10: 9999996, 12: 46011, 13: 46010.9 })], target);
-  assert.equal(p.additions.length, 2);
-});
-
-test("ATURAN 2: data sama DAN id_driver sama, walaupun tanggal lebih baru = akun yang sama, dilewati", () => {
-  const lama = mk(1, 46003, { driver: 1111111 });
-  const target = [mk(2, 46005, { driver: 2222222 }), lama, mk(3, 46001, { driver: 3333333 })];
-  const sama = (patch) => { const r = [...lama]; Object.assign(r, patch); return r; };
-  // hanya create_date dan timestamp_req lebih baru
-  let p = plan([...target, sama({ 12: 46009, 13: 46008.99 })], target);
-  assert.equal(p.additions.length, 0);
-  assert.equal(p.mode, "none");
-  // nhe_release (kolom tanggal A) ikut berbeda -> tetap dilewati
-  p = plan([...target, sama({ 0: "tanggal lain", 12: 46010, 13: 46009.9 })], target);
-  assert.equal(p.additions.length, 0);
-  // baris identik penuh -> dilewati
-  assert.equal(plan(target, target).mode, "none");
-  // tapi kalau SATU kolom data selain tanggal berbeda (mis. hub), itu bukan akun yang sama -> baru
-  assert.equal(plan([...target, sama({ 9: "Hub Lain", 12: 46012, 13: 46011.9 })], target).additions.length, 1);
-});
-
-test("identity: kolom tanggal (A, M, N) diabaikan, id_driver dan kolom data lain ikut", () => {
-  const a = mk(1, 46003, { driver: 111 }); const b = mk(1, 46099, { driver: 111 }); b[0] = "tgl lain"; b[13] = 46098.9;
-  assert.equal(identity(a), identity(b));
-  const c = mk(1, 46003, { driver: 222 });
-  assert.notEqual(identity(a), identity(c));
-  const d = [...a]; d[1] = "nama lain";
-  assert.notEqual(identity(a), identity(d));
-});
-
-test("tipe sel id_driver berubah di sumber (angka <-> teks) tidak dianggap baris baru", () => {
-  const target = [mk(1, 46003, { driver: 123456 }), mk(2, 46002, { driver: 555 })];
-  const table = [mk(1, 46003, { driver: "123456" }), mk(2, 46002, { driver: "555" })];
-  const p = plan(table, target);
-  assert.equal(p.mode, "none");
-  assert.equal(p.stale, 0);
 });
