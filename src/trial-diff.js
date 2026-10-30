@@ -23,6 +23,18 @@ export function signature(row) {
   return p.join("\u0001");
 }
 
+// Kolom tanggal: nhe_release (A), create_date (M), timestamp_req (N). TIDAK menentukan apakah sebuah baris itu baru.
+const DATE_COLUMNS_SKIPPED = new Set([0, 12, 13]);
+
+// Identitas akun = A:O TANPA kolom tanggal, jadi id_driver (K) ikut menentukan:
+//   - data sama tetapi id_driver BERBEDA  -> akun lain (mis. bergabung ulang) -> BARU, ditarik
+//   - data sama dan id_driver SAMA, walaupun tanggalnya lebih baru -> akun yang sama -> DILEWATI
+export function identity(row) {
+  const p = [];
+  for (let i = 0; i < DATA_COLS; i++) p.push(DATE_COLUMNS_SKIPPED.has(i) ? "" : part(row[i] ?? ""));
+  return p.join("");
+}
+
 const keyOf = (row) => {
   const m = row[CREATE];
   if (typeof m === "number") return m;
@@ -53,27 +65,29 @@ export function planIncremental({ table, target, maxRows, maxGroups = TRIAL.maxG
   const newestTarget = tkeys[0];
   const oldestTarget = tkeys[tkeys.length - 1];
 
-  // Hitungan kemunculan tiap baris yang sudah ada di tab
-  const counts = new Map();
-  for (const r of target) { const s = signature(r); counts.set(s, (counts.get(s) ?? 0) + 1); }
+  // Identitas akun yang sudah ada di tab
+  const present = new Set();
+  for (const r of target) present.add(identity(r));
 
-  // Telusuri baris sumber dalam "jendela" tab (create_date >= yang terlama di tab). Yang cocok dengan isi tab dicoret
-  // satu per satu; yang tidak cocok dan LEBIH BARU dari yang terlama di tab = baris baru. (Baris tepat di batas
-  // terlama diabaikan: di sana tab dipotong oleh batas ruang, bukan oleh perubahan data.)
+  // Telusuri baris sumber dalam "jendela" tab (create_date >= yang terlama di tab), dari yang terbaru.
+  // Identitas yang sudah ada di tab dilewati (walau tanggalnya lebih baru). Identitas yang belum ada dan LEBIH BARU dari
+  // yang terlama di tab = baris baru; kalau identitas yang sama muncul lagi di antara baris baru, hanya yang terbaru
+  // diambil. (Baris tepat di batas terlama diabaikan: di sana tab dipotong oleh batas ruang, bukan oleh perubahan data.)
   const additions = [];
+  const seen = new Set();
   let inWindow = 0;
   for (const r of table) {
     const k = keyOf(r);
     if (k < oldestTarget) break;
     inWindow++;
-    const s = signature(r);
-    const c = counts.get(s);
-    if (c > 0) counts.set(s, c - 1);
-    else if (k > oldestTarget) additions.push(r);
+    const id = identity(r);
+    seen.add(id);
+    if (present.has(id)) continue;
+    if (k > oldestTarget) { additions.push(r); present.add(id); }
   }
-  // Sisa hitungan = baris di tab yang tidak ada lagi/berubah di sumber (tidak dihapus otomatis; selesai saat full refresh)
+  // Baris di tab yang identitasnya tidak ada lagi di sumber (dihapus/diedit di sumber): dilaporkan, tidak dihapus otomatis
   let stale = 0;
-  for (const c of counts.values()) stale += c;
+  for (const r of target) if (!seen.has(identity(r))) stale++;
 
   const base = { newestSource, newestTarget, oldestTarget, inWindow, targetRows: target.length, additions, stale };
   if (additions.length === 0) return { ...base, mode: "none", groups: [], totalAfter: target.length, overflow: Math.max(0, target.length - maxRows) };

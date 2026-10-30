@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { TRIAL } from "../src/config.js";
-import { planIncremental, signature } from "../src/trial-diff.js";
+import { identity, planIncremental, signature } from "../src/trial-diff.js";
 import { applyIncremental, readTrialRows, verifyTrialTop } from "../src/trial-write.js";
 
 // baris sumber/tab: 24 kolom, nilai di A:O menentukan identitas; M (index 12) = create_date
@@ -62,12 +62,16 @@ test("data terlambat: baris dengan create_date lebih lama dari sebagian isi tab 
   assert.deepEqual(p.groups.map((g) => keys(g.rows)), [[46005], [46009], [46011]]);
 });
 
-test("baris kembar (isi identik) dihitung per jumlah kemunculan", () => {
+test("identitas yang sudah ada di tab tidak ditarik lagi (jumlah kemunculan tidak dihitung); identitas baru yang muncul dua kali hanya diambil yang terbaru", () => {
   const dup = mk(1, 46003);
-  const old = [dup, mk(2, 46002)];
-  assert.equal(plan([dup, dup, mk(2, 46002)], [dup, mk(2, 46002)]).additions.length, 1); // satu kembaran baru
-  assert.equal(plan([dup, mk(2, 46002)], [dup, dup, mk(2, 46002)]).stale, 1);            // tab punya satu kembaran lebih banyak
-  assert.equal(plan([dup, mk(2, 46002)], old).mode, "none");
+  const target = [dup, mk(2, 46002)];
+  assert.equal(plan([dup, dup, mk(2, 46002)], target).additions.length, 0);      // kembaran lagi: akun sama -> lewati
+  assert.equal(plan([dup, mk(2, 46002)], [dup, dup, mk(2, 46002)]).stale, 0);    // tab punya kembaran lebih banyak: tidak jadi masalah
+  assert.equal(plan([dup, mk(2, 46002)], target).mode, "none");
+  const baru1 = mk(9, 46008), baru2 = [...baru1]; baru2[12] = 46007; baru2[13] = 46006.99;   // akun baru yang sama muncul 2x dgn tanggal beda
+  const p = plan([dup, mk(2, 46002), baru1, baru2], target);
+  assert.equal(p.additions.length, 1);
+  assert.equal(p.additions[0][12], 46008);                                       // yang terbaru dipilih
 });
 
 test("batas terlama tab: baris yang terpotong oleh batas ruang tidak dianggap baru; baris lebih lama dari batas diabaikan", () => {
@@ -198,25 +202,47 @@ test("readTrialRows: baris 15 kolom, baris kosong di ujung dibuang; verifyTrialT
   assert.equal((await verifyTrialTop(broken, 1)).ok, false);
 });
 
-test("bergabung ulang: orang yang sama tapi id_driver dan/atau tanggal baru = baris BARU yang ditarik; baris identik tidak ditarik lagi", () => {
+test("ATURAN 1: data sama tetapi id_driver BERBEDA = akun baru (bergabung ulang), tetap ditarik", () => {
   const lama = mk(1, 46003, { driver: 1111111 });
   const target = [mk(2, 46005, { driver: 2222222 }), lama, mk(3, 46001, { driver: 3333333 })];
   const rejoin = (patch) => { const r = [...lama]; Object.assign(r, patch); return r; };
-  // data sama (nama, ktp, hub, dst) tetapi id_driver baru + tanggal baru
+  // id_driver baru + tanggal lebih baru -> baru, paling atas
   let p = plan([...target, rejoin({ 10: 9999999, 12: 46008, 13: 46007.99 })], target);
   assert.equal(p.additions.length, 1);
-  assert.equal(p.groups[0].p, 0);                    // paling baru -> row 2
-  // hanya id_driver yang berbeda (tanggal sama dengan baris lama)
-  p = plan([...target, rejoin({ 10: 9999998 })], target);
-  assert.equal(p.additions.length, 1);
-  // hanya tanggal yang berbeda (id sama)
-  p = plan([...target, rejoin({ 12: 46009, 13: 46008.99 })], target);
-  assert.equal(p.additions.length, 1);
-  // dua akun rejoin sekaligus
+  assert.equal(p.groups[0].p, 0);
+  // id_driver baru, tanggal sama dengan baris lama -> tetap baru
+  assert.equal(plan([...target, rejoin({ 10: 9999998 })], target).additions.length, 1);
+  // id_driver baru tetapi tanggal lebih lama (data terlambat, masih di rentang tab) -> tetap baru (akun lain)
+  assert.equal(plan([...target, rejoin({ 10: 9999995, 12: 46004, 13: 46003.99 })], target).additions.length, 1);
+  // dua akun rejoin sekaligus dengan id berbeda -> keduanya
   p = plan([...target, rejoin({ 10: 9999997, 12: 46010, 13: 46009.9 }), rejoin({ 10: 9999996, 12: 46011, 13: 46010.9 })], target);
   assert.equal(p.additions.length, 2);
-  // baris identik tidak ditarik lagi
+});
+
+test("ATURAN 2: data sama DAN id_driver sama, walaupun tanggal lebih baru = akun yang sama, dilewati", () => {
+  const lama = mk(1, 46003, { driver: 1111111 });
+  const target = [mk(2, 46005, { driver: 2222222 }), lama, mk(3, 46001, { driver: 3333333 })];
+  const sama = (patch) => { const r = [...lama]; Object.assign(r, patch); return r; };
+  // hanya create_date dan timestamp_req lebih baru
+  let p = plan([...target, sama({ 12: 46009, 13: 46008.99 })], target);
+  assert.equal(p.additions.length, 0);
+  assert.equal(p.mode, "none");
+  // nhe_release (kolom tanggal A) ikut berbeda -> tetap dilewati
+  p = plan([...target, sama({ 0: "tanggal lain", 12: 46010, 13: 46009.9 })], target);
+  assert.equal(p.additions.length, 0);
+  // baris identik penuh -> dilewati
   assert.equal(plan(target, target).mode, "none");
+  // tapi kalau SATU kolom data selain tanggal berbeda (mis. hub), itu bukan akun yang sama -> baru
+  assert.equal(plan([...target, sama({ 9: "Hub Lain", 12: 46012, 13: 46011.9 })], target).additions.length, 1);
+});
+
+test("identity: kolom tanggal (A, M, N) diabaikan, id_driver dan kolom data lain ikut", () => {
+  const a = mk(1, 46003, { driver: 111 }); const b = mk(1, 46099, { driver: 111 }); b[0] = "tgl lain"; b[13] = 46098.9;
+  assert.equal(identity(a), identity(b));
+  const c = mk(1, 46003, { driver: 222 });
+  assert.notEqual(identity(a), identity(c));
+  const d = [...a]; d[1] = "nama lain";
+  assert.notEqual(identity(a), identity(d));
 });
 
 test("tipe sel id_driver berubah di sumber (angka <-> teks) tidak dianggap baris baru", () => {
