@@ -2,12 +2,12 @@
 // Impor INKREMENTAL: sumber dibandingkan dengan isi tab, dan hanya baris yang BELUM ada di tab yang disisipkan.
 // Tulis ulang penuh hanya untuk tab kosong/baru, kalau diminta (TRIAL_FULL=true), atau kalau perubahannya terlalu besar.
 // Tidak menyentuh Nationwide, Sort by New, Control Panel, LOG, dan tidak mengirim SeaTalk. Hanya log GitHub.
-import { REGION_SPLIT, SOURCES, TRIAL } from "./config.js";
+import { REGION_SPLIT, SOURCES, TRIAL, trialIsSeparateFile, trialSpreadsheetId, trialStartSerial } from "./config.js";
 import { createClient, hubMapFromRows, readRegionRows, readSource } from "./sheets.js";
 import { buildOutput, fmtRibuan, splitResult } from "./transform.js";
 import { buildRegionLookup, buildTrialTable } from "./trial.js";
 import { buildBalance, formatBalance } from "./trial-balance.js";
-import { planIncremental } from "./trial-diff.js";
+import { keyOf, planIncremental } from "./trial-diff.js";
 import { applyIncremental, applyTrialFormats, ensureTrialTab, planTrialTab, readTrialRows, verifyTrialTop, writeTrialRows } from "./trial-write.js";
 
 // Serial tanggal Google Sheets (jam dinding WIB) -> teks
@@ -42,7 +42,12 @@ export async function runTrial({ dryRun = false, maxRowsOverride, full = false }
   const out = buildOutput(resolved);
   const table = buildTrialTable(out.rows, out.regions.map((x) => x[0]), lookup);
   const plan = await planTrialTab(api, { maxRowsOverride });
-  const notFound = table.rows.filter((r) => r[20] === "#N/A").length;
+  // Cakupan tab = data sejak tanggal awal (bawaan 1 Jul 2026). Yang lebih lama berada di luar cakupan, bukan "terlewat".
+  const startSerial = trialStartSerial();
+  const scoped = table.rows.filter((r) => keyOf(r) >= startSerial);
+  const outOfScope = table.rows.length - scoped.length;
+  console.log(`Tab tujuan: ${trialIsSeparateFile() ? "FILE TERPISAH (" + trialSpreadsheetId() + ")" : "BPO Tracker"}. Cakupan data: sejak ${serialText(startSerial)} — ${fmtRibuan(scoped.length)} baris sumber dalam cakupan, ${fmtRibuan(outOfScope)} baris lebih lama di luar cakupan.`);
+  const notFound = scoped.filter((r) => r[20] === "#N/A").length;
   console.log(
     `Sumber: ${fmtRibuan(table.total)} baris ber-create_date (${fmtRibuan(out.rows.length - table.total)} tanpa create_date dilewati). ` +
     `Ruang tab: maksimum ${fmtRibuan(plan.maxRows)} baris. Hub tidak ketemu di Region: ${notFound}.`,
@@ -57,7 +62,7 @@ export async function runTrial({ dryRun = false, maxRowsOverride, full = false }
   if (!full && plan.trial) {
     before = await readTrialRows(api);
     lap(`isi tab trial dibaca (${fmtRibuan(before.rows.length)} baris)`);
-    diff = planIncremental({ table: table.rows, target: before.rows, maxRows: plan.maxRows });
+    diff = planIncremental({ table: scoped, target: before.rows, maxRows: plan.maxRows });
     console.log(
       `PERBANDINGAN — terbaru di sumber: ${serialText(diff.newestSource)} | terbaru di tab: ${serialText(diff.newestTarget)} | ` +
       `baris sumber di rentang tab: ${fmtRibuan(diff.inWindow ?? 0)} | baris di tab: ${fmtRibuan(diff.targetRows ?? 0)}`,
@@ -73,7 +78,7 @@ export async function runTrial({ dryRun = false, maxRowsOverride, full = false }
 
   // Pemeriksaan balance: tab vs tab Success. Dipakai sebelum menulis (dry run / tidak ada perubahan) dan sesudah menulis.
   const checkBalance = (state, label) => {
-    const b = buildBalance({ table: table.rows, tabRows: state.rows, tabLabels: state.labels });
+    const b = buildBalance({ table: scoped, tabRows: state.rows, tabLabels: state.labels, startSerial, outOfScope });
     console.log(`
 [${label}]
 ${formatBalance(b)}`);
@@ -108,9 +113,9 @@ ${formatBalance(b)}`);
   } else {
     // mode "full": tab dibuat/diperbesar kalau perlu, lalu isinya ditulis ulang. Kalau ruang sel tidak cukup untuk SEMUA
     // baris, yang terlama dipotong dan itu DILAPORKAN terang-terangan di balance (bukan diam-diam).
-    const capped = table.rows.slice(0, plan.maxRows);
-    if (capped.length < table.rows.length) {
-      console.log(`::warning::Ruang sel hanya cukup untuk ${fmtRibuan(capped.length)} dari ${fmtRibuan(table.rows.length)} baris; ${fmtRibuan(table.rows.length - capped.length)} baris TERLAMA tidak dimuat`);
+    const capped = scoped.slice(0, plan.maxRows);
+    if (capped.length < scoped.length) {
+      console.log(`::warning::Ruang sel hanya cukup untuk ${fmtRibuan(capped.length)} dari ${fmtRibuan(scoped.length)} baris dalam cakupan; ${fmtRibuan(scoped.length - capped.length)} baris TERLAMA tidak dimuat`);
     }
     const tab = await ensureTrialTab(api, plan, capped.length);
     console.log(`Tab trial ${tab.created ? "DIBUAT" : "sudah ada"} (grid ${fmtRibuan(tab.rowCount)} baris).`);

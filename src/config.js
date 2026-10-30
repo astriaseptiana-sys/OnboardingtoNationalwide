@@ -83,6 +83,21 @@ export const TRIAL = {
   maxAdditions: 8_000, // 8.000 baris x 24 kolom ≈ separuh dari reserveCells, supaya sisipan tidak memakan cadangan sel
   maxGroups: 40,
 };
+// Tujuan tab trial. Bawaan: file BPO Tracker yang sama. Kalau env TRIAL_SPREADSHEET_ID diisi, tab trial ditulis ke FILE LAIN
+// (batas 10 juta sel dihitung per file, jadi seluruh data muat tanpa menyentuh Nationwide/Sort by New). Sumber, tab Region,
+// dan format sumber salinan tetap dibaca dari BPO Tracker.
+export const trialSpreadsheetId = () => (process.env.TRIAL_SPREADSHEET_ID ?? "").trim() || DEST.spreadsheetId;
+export const trialIsSeparateFile = () => trialSpreadsheetId() !== DEST.spreadsheetId;
+
+// Cakupan tab trial = data Success dengan create_date >= tanggal ini (bawaan 1 Juli 2026; env TRIAL_START "YYYY-MM-DD").
+// Baris yang lebih lama berada di luar cakupan (bukan "terlewat").
+export const TRIAL_START_DEFAULT = "2026-07-01";
+export function trialStartSerial(text = process.env.TRIAL_START || TRIAL_START_DEFAULT) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(text).trim());
+  if (!m) throw new Error(`TRIAL_START harus berformat YYYY-MM-DD, bukan '${text}'`);
+  return (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000; // serial tanggal Google Sheets (00:00)
+}
+
 export const NOTIFY_EMAILS = ["astria.septiana@spxexpress.com"]; // di-mention di setiap notifikasi SeaTalk
 export const ANOMALY_DROP = 0.30;    // region turun >= 30% dibanding run sebelumnya
 export const TZ = "Asia/Jakarta";

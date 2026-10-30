@@ -206,3 +206,42 @@ test("ensureTrialTab: tab sudah ada -> tidak dibuat ulang, hanya diperbesar kala
   assert.equal(grow.properties.sheetId, 99);
   assert.equal(grow.properties.gridProperties.rowCount, 3000 + 1 + TRIAL.rowBuffer);
 });
+
+// ---- cakupan tanggal dan file terpisah ----
+const withEnv = async (vars, fn) => {
+  const old = {};
+  for (const k of Object.keys(vars)) { old[k] = process.env[k]; if (vars[k] === undefined) delete process.env[k]; else process.env[k] = vars[k]; }
+  try { return await fn(); } finally { for (const k of Object.keys(old)) { if (old[k] === undefined) delete process.env[k]; else process.env[k] = old[k]; } }
+};
+
+test("trialStartSerial: bawaan 1 Jul 2026 (serial Sheets), bisa diganti lewat TRIAL_START, format salah = error", async () => {
+  const { trialStartSerial } = await import("../src/config.js");
+  await withEnv({ TRIAL_START: undefined }, () => assert.equal(trialStartSerial(), 46204)); // 1 Jul 2026
+  await withEnv({ TRIAL_START: "2026-07-02" }, () => assert.equal(trialStartSerial(), 46205));
+  assert.equal(trialStartSerial("1899-12-31"), 1);
+  assert.throws(() => trialStartSerial("1 Juli 2026"), /YYYY-MM-DD/);
+});
+
+test("trialSpreadsheetId: bawaan BPO Tracker; TRIAL_SPREADSHEET_ID mengalihkan ke file lain", async () => {
+  const cfg = await import("../src/config.js");
+  await withEnv({ TRIAL_SPREADSHEET_ID: undefined }, () => { assert.equal(cfg.trialSpreadsheetId(), cfg.DEST.spreadsheetId); assert.equal(cfg.trialIsSeparateFile(), false); });
+  await withEnv({ TRIAL_SPREADSHEET_ID: "  FILE_LAIN  " }, () => { assert.equal(cfg.trialSpreadsheetId(), "FILE_LAIN"); assert.equal(cfg.trialIsSeparateFile(), true); });
+  await withEnv({ TRIAL_SPREADSHEET_ID: "" }, () => assert.equal(cfg.trialIsSeparateFile(), false));
+});
+
+test("file terpisah: metadata dibaca dari file itu, tanpa cadangan sel, tulis hanya ke file itu; format tetap dibaca dari BPO Tracker", async () => {
+  const cfg = await import("../src/config.js");
+  await withEnv({ TRIAL_SPREADSHEET_ID: "FILE_LAIN" }, async () => {
+    const api = fakeApi({ sheets: [{ properties: { sheetId: 0, title: "Sheet1", gridProperties: { rowCount: 1000, columnCount: 26 } } }] });
+    const plan = await planTrialTab(api);
+    assert.equal(api.calls[0].req.spreadsheetId, "FILE_LAIN");
+    assert.equal(plan.maxRows, Math.floor((CELL_LIMIT - 26000) / TRIAL.columns) - 1 - TRIAL.rowBuffer); // reserve 0
+    const tab = await ensureTrialTab(api, plan, 3000);
+    await writeTrialRows(api, dataRows(3000), tab.rowCount);
+    const ids = api.calls.filter((c) => ["batchUpdate", "update", "write", "clear"].includes(c.op)).map((c) => c.req.spreadsheetId ?? c.req.spreadsheetId);
+    assert.ok(ids.length >= 4);
+    assert.ok(ids.every((id) => id === "FILE_LAIN"), `semua penulisan harus ke FILE_LAIN: ${ids}`);
+    const reads = api.calls.filter((c) => c.op === "get").map((c) => c.req.spreadsheetId);
+    assert.ok(reads.includes(cfg.DEST.spreadsheetId), "format Nationwide dibaca dari BPO Tracker");
+  });
+});

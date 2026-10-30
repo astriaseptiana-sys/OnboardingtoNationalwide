@@ -1,6 +1,6 @@
 // Penulisan tab "Sort by New (Trial)". PENTING: modul ini hanya boleh MENULIS ke tab trial. Tab lain
 // (Nationwide, Sort by New, Control Panel, LOG, Region) hanya dibaca (metadata ukuran dan format sumber salinan).
-import { CELL_LIMIT, CHUNK_ROWS, DEST, TRIAL } from "./config.js";
+import { CELL_LIMIT, CHUNK_ROWS, DEST, TRIAL, trialIsSeparateFile, trialSpreadsheetId } from "./config.js";
 import { describeError, retryLong, withRetry } from "./sheets.js";
 import { isBlankRow, normalizeRow } from "./transform.js";
 import { TRIAL_HEADER } from "./trial.js";
@@ -11,8 +11,8 @@ const LAST_COL = colLetter(TRIAL.columns - 1);
 // Rencana ukuran tab: berapa baris yang muat tanpa melewati batas 10 juta sel (dengan sisa cadangan untuk produksi).
 export async function planTrialTab(api, { maxRowsOverride } = {}) {
   const res = await withRetry(
-    () => api.spreadsheets.get({ spreadsheetId: DEST.spreadsheetId, fields: "sheets.properties(sheetId,title,gridProperties)" }),
-    "Baca metadata BPO Tracker",
+    () => api.spreadsheets.get({ spreadsheetId: trialSpreadsheetId(), fields: "sheets.properties(sheetId,title,gridProperties)" }),
+    trialIsSeparateFile() ? "Baca metadata file tab trial" : "Baca metadata BPO Tracker",
   );
   let others = 0;
   let trial = null;
@@ -24,11 +24,13 @@ export async function planTrialTab(api, { maxRowsOverride } = {}) {
     else others += cells;
     if (p.title === TRIAL.formatSourceTab) source = { sheetId: p.sheetId };
   }
-  const available = CELL_LIMIT - others - TRIAL.reserveCells;
+  // File terpisah tidak berisi tab produksi, jadi cadangan untuk sync produksi tidak diperlukan
+  const reserve = trialIsSeparateFile() ? 0 : TRIAL.reserveCells;
+  const available = CELL_LIMIT - others - reserve;
   let maxRows = Math.floor(available / TRIAL.columns) - 1 - TRIAL.rowBuffer; // dikurangi baris header dan cadangan
   if (Number.isFinite(maxRowsOverride)) maxRows = Math.min(maxRows, maxRowsOverride);
   if (maxRows < 1000) {
-    throw new Error(`Ruang spreadsheet tidak cukup untuk tab trial (sisa ${available.toLocaleString("en-US")} sel setelah cadangan). Tab lain tidak diubah.`);
+    throw new Error(`Ruang spreadsheet tidak cukup untuk tab trial (sisa ${available.toLocaleString("en-US")} sel setelah cadangan ${reserve.toLocaleString("en-US")}). Tab lain tidak diubah.`);
   }
   return { trial, source, maxRows, othersCells: others };
 }
@@ -41,13 +43,13 @@ export async function applyTrialFormats(api, sheetId) {
     cell: { userEnteredFormat: { numberFormat: { type: c.type, pattern: c.pattern } } },
     fields: "userEnteredFormat.numberFormat",
   } }));
-  await withRetry(() => api.spreadsheets.batchUpdate({ spreadsheetId: DEST.spreadsheetId, requestBody: { requests } }, { timeout: 120_000 }), "Format tanggal dan SLA tab trial", 2, [5000]);
+  await withRetry(() => api.spreadsheets.batchUpdate({ spreadsheetId: trialSpreadsheetId(), requestBody: { requests } }, { timeout: 120_000 }), "Format tanggal dan SLA tab trial", 2, [5000]);
 }
 
 // Pastikan tab trial ada. Dibuat dengan header yang sama, frozen 1 baris 2 kolom, dan format kolom disalin dari
 // tab Nationwide (hanya dibaca). Pemformatan bersifat kosmetik: gagal = peringatan, bukan kegagalan.
 export async function ensureTrialTab(api, plan, dataRows) {
-  const { spreadsheetId } = DEST;
+  const spreadsheetId = trialSpreadsheetId();
   const needRows = dataRows + 1 + TRIAL.rowBuffer;
   const warnings = [];
 
@@ -82,7 +84,7 @@ export async function ensureTrialTab(api, plan, dataRows) {
   // (satu permintaan kecil per kolom, bukan menyalin jutaan sel). Lebar kolom disamakan. Kosmetik, tidak fatal.
   try {
     const meta = await withRetry(() => api.spreadsheets.get({
-      spreadsheetId, ranges: [`'${TRIAL.formatSourceTab}'!A1:${LAST_COL}2`], includeGridData: true,
+      spreadsheetId: DEST.spreadsheetId, ranges: [`'${TRIAL.formatSourceTab}'!A1:${LAST_COL}2`], includeGridData: true,
       fields: "sheets(properties(title),data(rowData(values(userEnteredFormat)),columnMetadata(pixelSize)))",
     }), "Baca format Nationwide", 2, [5000]);
     const grid = meta.data.sheets.find((s) => s.properties.title === TRIAL.formatSourceTab)?.data?.[0];
@@ -118,7 +120,7 @@ export async function ensureTrialTab(api, plan, dataRows) {
 // Tulis seluruh isi tab trial (nilai apa adanya) per potongan, lalu bersihkan sisa baris lama di bawahnya.
 // Tidak ada langkah lain: tidak ada format ulang, tidak menyentuh tab lain.
 export async function writeTrialRows(api, rows, rowCount) {
-  const { spreadsheetId } = DEST;
+  const spreadsheetId = trialSpreadsheetId();
   for (let start = 0; start < rows.length; start += CHUNK_ROWS) {
     const end = Math.min(start + CHUNK_ROWS, rows.length);
     const r1 = start + 2; // baris 1 = header
@@ -145,7 +147,7 @@ export async function writeTrialRows(api, rows, rowCount) {
 // Mengembalikan { rows (15 kolom), labels } dengan baris kosong di ujung dibuang.
 export async function readTrialRows(api) {
   const res = await retryLong(() => api.spreadsheets.values.batchGet({
-    spreadsheetId: DEST.spreadsheetId,
+    spreadsheetId: trialSpreadsheetId(),
     ranges: [`'${TRIAL.tab}'!A2:O`, `'${TRIAL.tab}'!X2:X`],
     valueRenderOption: "UNFORMATTED_VALUE",
   }, { timeout: 180_000 }), "Baca isi tab trial");
@@ -163,7 +165,7 @@ const cellValue = (v) => (typeof v === "number" ? { userEnteredValue: { numberVa
 // dikerjakan dari posisi paling bawah ke atas supaya posisi di atasnya tidak bergeser. Setelah itu baris terlama
 // yang melebihi batas ruang dibuang dari bawah. Kalau terhenti di tengah, run berikutnya menghitung ulang selisihnya.
 export async function applyIncremental(api, sheetId, plan, { maxRows }) {
-  const { spreadsheetId } = DEST;
+  const spreadsheetId = trialSpreadsheetId();
   for (const g of plan.groups) {
     const k = g.rows.length;
     const t0 = Date.now();
@@ -190,7 +192,7 @@ export async function applyIncremental(api, sheetId, plan, { maxRows }) {
 export async function verifyTrialTop(api, newestKey) {
   try {
     const res = await retryLong(() => api.spreadsheets.values.get({
-      spreadsheetId: DEST.spreadsheetId, range: `'${TRIAL.tab}'!M2`, valueRenderOption: "UNFORMATTED_VALUE",
+      spreadsheetId: trialSpreadsheetId(), range: `'${TRIAL.tab}'!M2`, valueRenderOption: "UNFORMATTED_VALUE",
     }), "Cek baris teratas tab trial");
     const top = res.data.values?.[0]?.[0];
     return typeof top === "number" && Math.abs(top - newestKey) < 1e-9 ? { ok: true } : { ok: false, error: `row 2 berisi ${JSON.stringify(top)}, seharusnya ${newestKey}` };

@@ -45,6 +45,10 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           TRIAL: ${{ inputs.trial }}
           TRIAL_FULL: ${{ inputs.trial_full }}
+          # Opsional (Settings -> Secrets and variables -> Actions -> Variables): tab trial ditulis ke FILE Google Sheets lain
+          # (batas 10 juta sel dihitung per file) dan tanggal awal cakupan (YYYY-MM-DD, bawaan 2026-07-01).
+          TRIAL_SPREADSHEET_ID: ${{ vars.TRIAL_SPREADSHEET_ID || secrets.TRIAL_SPREADSHEET_ID }}
+          TRIAL_START: ${{ vars.TRIAL_START }}
           # Isi file key service account (JSON). Nama secret di repo ini: ONBOARDING_TO_NATIONALWIDE.
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON || secrets.ONBOARDING_TO_NATIONALWIDE }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}

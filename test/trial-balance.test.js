@@ -80,3 +80,14 @@ test("tab kosong -> TIDAK BALANCE (semua akun sumber belum ada)", () => {
   assert.equal(b.status, "tidak-balance");
   assert.equal(b.missing, 1);
 });
+
+test("cakupan tanggal: baris sumber di luar cakupan tidak dihitung terlewat dan dilaporkan", () => {
+  const all = [mk(1, 46100), mk(2, 46300), mk(3, 46301)];
+  const inScope = all.filter((r) => r[12] >= 46200);
+  const b = buildBalance({ table: desc(inScope), ...tabOf(inScope), startSerial: 46200, outOfScope: 1 });
+  assert.equal(b.status, "balance-penuh");
+  assert.equal(b.outOfScope, 1);
+  const text = formatBalance(b);
+  assert.match(text, /Cakupan data: sejak .* 1 baris sumber yang lebih lama/);
+  assert.match(text, /SELURUH data dalam cakupan/);
+});

@@ -21,7 +21,7 @@ const maxDriver = (rows) => {
  * @param table     seluruh baris sumber (24 kolom), urut create_date menurun, TANPA batas jumlah baris
  * @param tabRows   isi tab (A:O, 15 kolom), urut menurun; tabLabels = isi kolom X untuk baris yang sama
  */
-export function buildBalance({ table, tabRows, tabLabels = [], columns = TRIAL.columns }) {
+export function buildBalance({ table, tabRows, tabLabels = [], columns = TRIAL.columns, startSerial = null, outOfScope = 0 }) {
   const srcTotal = table.length;
   const tabTotal = tabRows.length;
   const oldestSrc = srcTotal ? keyOf(table[srcTotal - 1]) : null;
@@ -72,6 +72,7 @@ export function buildBalance({ table, tabRows, tabLabels = [], columns = TRIAL.c
     cellsNeeded: complete ? 0 : (srcTotal - tabTotal) * columns, // perkiraan sel tambahan agar tab memuat semuanya
     maxIdSrc: maxDriver(table), maxIdTab: maxDriver(tabRows),
     perLabel,
+    startSerial, outOfScope,
   };
 }
 
@@ -89,7 +90,8 @@ export function formatBalance(b) {
   L.push(`  Total baris — sumber: ${num(b.srcTotal)} (identitas unik ${num(b.srcDistinct)}) | tab: ${num(b.tabTotal)}`);
   L.push(`  Tanggal terbaru — sumber: ${when(b.newestSrc)} | tab: ${when(b.newestTab)}   Tanggal terlama — sumber: ${when(b.oldestSrc)} | tab: ${when(b.oldestTab)}`);
   L.push(`  id_driver terbesar — sumber: ${b.maxIdSrc ?? "-"} | tab: ${b.maxIdTab ?? "-"}`);
-  if (b.complete) L.push("  Cakupan: PENUH (tab memuat sampai baris terlama di sumber)");
+  if (b.startSerial !== null) L.push(`  Cakupan data: sejak ${when(b.startSerial)} (sesuai pengaturan); ${num(b.outOfScope)} baris sumber yang lebih lama dari itu di luar cakupan`);
+  if (b.complete) L.push(b.startSerial !== null ? `  Tab memuat SELURUH data dalam cakupan (dari ${when(b.oldestTab)})` : "  Cakupan: PENUH (tab memuat sampai baris terlama di sumber)");
   else L.push(`  Cakupan: DALAM RENTANG sejak ${when(b.oldestTab)}; ${num(b.notInTab)} baris sumber yang lebih lama TIDAK muat (perkiraan butuh ${num(b.cellsNeeded)} sel lagi)`);
   L.push(`  Akun sumber (dalam cakupan) yang BELUM ada di tab: ${num(b.missing)} | akun di tab yang TIDAK ada di sumber: ${num(b.extra)}`);
   if (b.scopeTotal !== b.scopeDistinct) L.push(`  Catatan: ${num(b.scopeTotal - b.scopeDistinct)} baris sumber punya identitas kembar (data sama dan id_driver sama, tanggal beda); jumlah baris tab boleh berada di antara ${num(b.scopeDistinct)} dan ${num(b.scopeTotal)}`);
