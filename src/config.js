@@ -51,7 +51,9 @@ export const RETRY_DELAY_MS = 3000;
 // jadi retry-nya lebih sabar dan tiap request diberi batas waktu.
 export const WRITE_RETRY_DELAYS_MS = [5000, 15000, 30000, 60000]; // 5 percobaan
 export const WRITE_TIMEOUT_MS = 180_000;                          // batas waktu per request tulis
-export const MAX_ATTEMPTS = 2;                                    // seluruh sync diulang sekali kalau gagal
+export const FORMAT_FALLBACK_ROWS = 3000;                        // baris terakhir yang diformat kalau baris terakhir run sebelumnya tidak diketahui
+export const FORMAT_TIMEOUT_MS = 60_000;                          // batas waktu per request format (tidak wajib, jadi singkat)
+export const MAX_ATTEMPTS = 2;                                   // seluruh sync diulang sekali kalau gagal
 export const ATTEMPT_PAUSE_MS = 30_000;
 export const CHUNK_ROWS = 5000;      // baris per request tulis
 export const ROW_BUFFER = 500;       // baris cadangan di bawah data

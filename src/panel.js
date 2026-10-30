@@ -1,6 +1,7 @@
 import { DEST } from "./config.js";
 import { toSheetSerial } from "./log.js";
-import { describeError, longOpts, retryLong } from "./sheets.js";
+import { describeError, reqOpts, retryLong } from "./sheets.js";
+import { WRITE_TIMEOUT_MS } from "./config.js";
 
 // Tab "Control Panel" di BPO Tracker. Hanya NILAI sel yang diisi (dan warna status), struktur tidak diubah.
 // Layout sama dengan yang diisi script Apps Script lama:
@@ -124,40 +125,40 @@ function cellRequest(sheetId, row, colLetter, v, { fg, bg } = {}) {
   };
 }
 
-async function sheetIdOfPanel(api) {
-  const res = await api.spreadsheets.get({ spreadsheetId: DEST.spreadsheetId, fields: "sheets.properties(sheetId,title)" }, longOpts);
+async function sheetIdOfPanel(api, signal) {
+  const res = await api.spreadsheets.get({ spreadsheetId: DEST.spreadsheetId, fields: "sheets.properties(sheetId,title)" }, reqOpts(WRITE_TIMEOUT_MS, signal));
   const s = res.data.sheets.find((x) => x.properties.title === PANEL.tab);
   if (!s) throw Object.assign(new Error(`Tab '${PANEL.tab}' tidak ditemukan`), { status: 404 });
   return s.properties.sheetId;
 }
 
 // Hanya status sistem (B9): "Sedang Diproses..." saat mulai, atau "Error" kalau gagal. Tidak pernah throw.
-export async function setPanelStatus(api, text, fg) {
+export async function setPanelStatus(api, text, fg, { signal } = {}) {
   try {
-    const sheetId = await retryLong(() => sheetIdOfPanel(api), "Cari tab Control Panel");
+    const sheetId = await retryLong(() => sheetIdOfPanel(api, signal), "Cari tab Control Panel", signal);
     await retryLong(() => api.spreadsheets.batchUpdate({
       spreadsheetId: DEST.spreadsheetId,
       requestBody: { requests: [cellRequest(sheetId, PANEL.status.row, PANEL.status.col, text, { fg })] },
-    }, longOpts), "Set status Control Panel");
+    }, reqOpts(WRITE_TIMEOUT_MS, signal)), "Set status Control Panel", signal);
     return { ok: true };
   } catch (e) {
     console.warn(`⚠️ Gagal set status Control Panel: ${e.message}`);
     return { ok: false, error: describeError(e) };
   }
 }
-export const setPanelBusy = (api) => setPanelStatus(api, "🔄 Sedang Diproses...", COLORS.busy.fg);
-export const setPanelError = (api) => setPanelStatus(api, "❌ Error — cek LOG", COLORS.error.fg);
+export const setPanelBusy = (api, opts) => setPanelStatus(api, "🔄 Sedang Diproses...", COLORS.busy.fg, opts);
+export const setPanelError = (api, opts) => setPanelStatus(api, "❌ Error — cek LOG", COLORS.error.fg, opts);
 
 // Isi kartu status dan tabel region. Region dicari berdasarkan NAMA di kolom B (anti geser baris).
 // Nama yang tidak ketemu (mis. "Jabo Recycle Pipeline" yang bukan lagi sumber) tidak disentuh. Tidak pernah throw.
-export async function updateControlPanel(api, panel) {
+export async function updateControlPanel(api, panel, { signal } = {}) {
   const { spreadsheetId } = DEST;
   try {
-    const sheetId = await retryLong(() => sheetIdOfPanel(api), "Cari tab Control Panel");
+    const sheetId = await retryLong(() => sheetIdOfPanel(api, signal), "Cari tab Control Panel", signal);
     const res = await retryLong(() => api.spreadsheets.values.get({
       spreadsheetId,
       range: `'${PANEL.tab}'!${PANEL.nameCol}${PANEL.scanFrom}:${PANEL.nameCol}${PANEL.scanTo}`,
-    }, longOpts), "Baca nama region Control Panel");
+    }, reqOpts(WRITE_TIMEOUT_MS, signal)), "Baca nama region Control Panel", signal);
     const rowOf = {};
     (res.data.values ?? []).forEach((r, i) => {
       const name = String(r[0] ?? "").trim();
@@ -184,7 +185,7 @@ export async function updateControlPanel(api, panel) {
     addRow(PANEL.totalName, panel.totalRow);
     if (missing.length) console.warn(`⚠️ Tidak ketemu di Control Panel: ${missing.join(", ")}`);
 
-    await retryLong(() => api.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }, longOpts), "Isi Control Panel");
+    await retryLong(() => api.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }, reqOpts(WRITE_TIMEOUT_MS, signal)), "Isi Control Panel", signal);
     return { ok: true, missing };
   } catch (e) {
     console.warn(`⚠️ Gagal mengisi Control Panel: ${e.message}`);

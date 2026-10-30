@@ -1,13 +1,20 @@
 import { sheets } from "@googleapis/sheets";
 import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import {
-  CELL_LIMIT, CHUNK_ROWS, DATE_COLUMNS, DEST, LOG_TAB, MAX_RETRY, REGION_SPLIT, RETRY_DELAY_MS, ROW_BUFFER,
+  CELL_LIMIT, CHUNK_ROWS, DATE_COLUMNS, DEST, FORMAT_FALLBACK_ROWS, FORMAT_TIMEOUT_MS, LOG_TAB, MAX_RETRY, REGION_SPLIT, RETRY_DELAY_MS, ROW_BUFFER,
   SOURCE_LAST_COL, SOURCE_TAB, SOURCE_WIDTH, WRITE_RETRY_DELAYS_MS, WRITE_TIMEOUT_MS,
 } from "./config.js";
 import { cleanRows, colIndex } from "./transform.js";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Tidur yang langsung selesai kalau `signal` dibatalkan, supaya pekerjaan yang sudah dibatalkan tidak menahan proses.
+const sleep = (ms, signal) => new Promise((resolve) => {
+  const t = setTimeout(resolve, ms);
+  signal?.addEventListener?.("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+});
+
+// Opsi permintaan: batas waktu + (opsional) signal pembatal. Hanya untuk pekerjaan tambahan, bukan penulisan data utama.
+export const reqOpts = (timeout, signal) => (signal ? { timeout, signal } : { timeout });
 
 // Urutan prioritas kredensial: service account -> OAuth refresh token -> access token (debug lokal).
 const filled = (v) => typeof v === "string" && v.trim() !== "";
@@ -48,7 +55,8 @@ const httpStatus = (e) => {
 
 // Retry untuk error sementara (429/5xx/timeout). Error izin/not-found tidak di-retry.
 // `delay` = angka (jeda dikali nomor percobaan) atau array jeda per percobaan.
-export async function withRetry(fn, label, attempts = MAX_RETRY, delay = RETRY_DELAY_MS) {
+// `signal` (opsional): kalau dibatalkan, tidak ada percobaan baru dan jeda langsung dihentikan.
+export async function withRetry(fn, label, attempts = MAX_RETRY, delay = RETRY_DELAY_MS, signal) {
   let lastErr;
   for (let i = 1; i <= attempts; i++) {
     try {
@@ -57,8 +65,9 @@ export async function withRetry(fn, label, attempts = MAX_RETRY, delay = RETRY_D
       lastErr = e;
       const status = httpStatus(e);
       console.warn(`⚠️ ${label}: percobaan ${i}/${attempts} gagal${status ? ` (HTTP ${status})` : ""}: ${e.message}`);
-      if ([400, 401, 403, 404].includes(status) || i === attempts) break;
-      await sleep(Array.isArray(delay) ? delay[Math.min(i - 1, delay.length - 1)] : delay * i);
+      if ([400, 401, 403, 404].includes(status) || i === attempts || signal?.aborted) break;
+      await sleep(Array.isArray(delay) ? delay[Math.min(i - 1, delay.length - 1)] : delay * i, signal);
+      if (signal?.aborted) break;
     }
   }
   throw lastErr;
@@ -73,7 +82,7 @@ export class PartialWriteError extends Error {
   }
 }
 
-const makeWriteRetry = (delays) => (fn, label) => withRetry(fn, label, delays.length + 1, delays);
+const makeWriteRetry = (delays) => (fn, label, signal) => withRetry(fn, label, delays.length + 1, delays, signal);
 const writeOpts = { timeout: WRITE_TIMEOUT_MS };
 
 // Penulisan kecil (LOG, Control Panel) tepat setelah penulisan data besar: Google masih menghitung ulang rumus,
@@ -107,10 +116,10 @@ export async function readSource(api, source) {
 }
 
 // Peta nama hub (huruf kecil) -> region untuk region yang dipecah, dari tab Region di BPO Tracker.
-export async function readRegionMap(api, split = REGION_SPLIT) {
+export async function readRegionMap(api, split = REGION_SPLIT, { signal } = {}) {
   const res = await withRetry(
-    () => api.spreadsheets.values.get({ spreadsheetId: DEST.spreadsheetId, range: `'${split.mapTab}'!A2:B` }, { timeout: 180_000 }),
-    `Baca peta hub tab ${split.mapTab}`,
+    () => api.spreadsheets.values.get({ spreadsheetId: DEST.spreadsheetId, range: `'${split.mapTab}'!A2:B` }, reqOpts(180_000, signal)),
+    `Baca peta hub tab ${split.mapTab}`, MAX_RETRY, RETRY_DELAY_MS, signal,
   );
   const wanted = new Set(split.regions);
   const map = new Map();
@@ -123,13 +132,31 @@ export async function readRegionMap(api, split = REGION_SPLIT) {
 }
 
 // Jumlah baris per label di kolom X Nationwide (hasil run sebelumnya), untuk perbandingan laporan.
-export async function readPreviousColumn(api) {
+export async function readPreviousColumn(api, { signal } = {}) {
   const { spreadsheetId, tab, regionCol, firstRow } = DEST;
   const res = await withRetry(
-    () => api.spreadsheets.values.get({ spreadsheetId, range: `'${tab}'!${regionCol}${firstRow}:${regionCol}` }, { timeout: 180_000 }),
-    "Baca kolom Sumber_Region Nationwide",
+    () => api.spreadsheets.values.get({ spreadsheetId, range: `'${tab}'!${regionCol}${firstRow}:${regionCol}` }, reqOpts(180_000, signal)),
+    "Baca kolom Sumber_Region Nationwide", MAX_RETRY, RETRY_DELAY_MS, signal,
   );
   return res.data.values ?? [];
+}
+
+// Pemeriksaan ringan setelah menulis (3 sel saja, bukan 125 ribu baris): baris data terakhir terisi dan baris
+// sesudahnya kosong. Menggantikan pembacaan ulang seluruh kolom Sumber_Region. Tidak pernah throw.
+export async function verifyLastRow(api, lastRow, { signal } = {}) {
+  const { spreadsheetId, tab, dataFirstCol, regionCol } = DEST;
+  try {
+    const res = await retryLong(() => api.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges: [`'${tab}'!${dataFirstCol}${lastRow}:${dataFirstCol}${lastRow + 1}`, `'${tab}'!${regionCol}${lastRow}:${regionCol}${lastRow + 1}`],
+    }, reqOpts(WRITE_TIMEOUT_MS, signal)), "Cek baris terakhir Nationwide", signal);
+    const [a, x] = res.data.valueRanges.map((v) => v.values ?? []);
+    const filled = (arr, i) => String(arr[i]?.[0] ?? "").trim() !== "";
+    const ok = filled(a, 0) && !filled(a, 1) && filled(x, 0) && !filled(x, 1);
+    return ok ? { ok: true } : { ok: false, error: `baris terakhir ${lastRow} tidak sesuai harapan (data terakhir kosong, atau masih ada isi di bawahnya)` };
+  } catch (e) {
+    return { ok: false, error: describeError(e) };
+  }
 }
 
 async function getDestMeta(api) {
@@ -152,15 +179,15 @@ async function getDestMeta(api) {
 
 // Sisipkan satu baris di paling atas tab LOG (di bawah header), format kolom diwarisi dari baris di bawahnya.
 // Tidak pernah throw: gagal mencatat log tidak boleh menggagalkan sync.
-export async function appendLogRow(api, row) {
+export async function appendLogRow(api, row, { signal } = {}) {
   const { spreadsheetId } = DEST;
   try {
     const sheetId = await retryLong(async () => {
-      const res = await api.spreadsheets.get({ spreadsheetId, fields: "sheets.properties(sheetId,title)" }, longOpts);
+      const res = await api.spreadsheets.get({ spreadsheetId, fields: "sheets.properties(sheetId,title)" }, reqOpts(WRITE_TIMEOUT_MS, signal));
       const s = res.data.sheets.find((x) => x.properties.title === LOG_TAB);
       if (!s) throw Object.assign(new Error(`Tab '${LOG_TAB}' tidak ditemukan`), { status: 404 });
       return s.properties.sheetId;
-    }, "Cari tab LOG");
+    }, "Cari tab LOG", signal);
 
     const cell = (v) => (typeof v === "number" ? { userEnteredValue: { numberValue: v } }
       : v === "" || v == null ? {} : { userEnteredValue: { stringValue: String(v) } });
@@ -171,7 +198,7 @@ export async function appendLogRow(api, row) {
         { insertDimension: { range: { sheetId, dimension: "ROWS", startIndex: 1, endIndex: 2 }, inheritFromBefore: false } },
         { updateCells: { start: { sheetId, rowIndex: 1, columnIndex: 0 }, rows: [{ values: row.map(cell) }], fields: "userEnteredValue" } },
       ] },
-    }, longOpts), "Tulis baris LOG");
+    }, reqOpts(WRITE_TIMEOUT_MS, signal)), "Tulis baris LOG", signal);
     return { ok: true };
   } catch (e) {
     console.warn(`⚠️ Gagal mencatat ke tab ${LOG_TAB}: ${e.message}`);
@@ -181,7 +208,7 @@ export async function appendLogRow(api, row) {
 
 // Tulis data ke tab tujuan (Nationwide): A:O + X saja. Data baru ditulis dulu, baru sisa baris lama di bawahnya
 // dibersihkan, jadi tab tidak sempat kosong. Kolom P:W (rumus) tidak disentuh.
-export async function writeDestination(api, { rows, regions }, { retryDelays = WRITE_RETRY_DELAYS_MS } = {}) {
+export async function writeDestination(api, { rows, regions }, { retryDelays = WRITE_RETRY_DELAYS_MS, prevLastRow } = {}) {
   const { spreadsheetId, tab, dataFirstCol, dataLastCol, regionCol, firstRow, companionTabs = [] } = DEST;
   const writeRetry = makeWriteRetry(retryDelays);
   const meta = await getDestMeta(api);
@@ -251,19 +278,8 @@ export async function writeDestination(api, { rows, regions }, { retryDelays = W
     console.log(`  ditulis baris ${r1}-${r2} (${((Date.now() - t0) / 1000).toFixed(1)} dtk)`);
   }
 
-  // 3) Format kolom (disamakan dengan format yang sudah ada di Nationwide)
-  await writeRetry(() => api.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: { requests: DATE_COLUMNS.map((c) => ({
-      repeatCell: {
-        range: { sheetId: meta.sheetId, startRowIndex: firstRow - 1, endRowIndex: lastRow, startColumnIndex: c.index, endColumnIndex: c.index + 1 },
-        cell: { userEnteredFormat: { numberFormat: { type: c.type, pattern: c.pattern } } },
-        fields: "userEnteredFormat.numberFormat",
-      },
-    })) },
-  }, writeOpts), "Format kolom tanggal");
-
-  // 4) Bersihkan sisa baris lama di bawah data baru (hanya A:O dan X)
+  // 3) Bersihkan sisa baris lama di bawah data baru (hanya A:O dan X). Ini bagian dari integritas data (baris lama
+  //    yang tersisa = duplikat), jadi DIDAHULUKAN sebelum format dan tetap wajib: gagal setelah semua percobaan = gagal.
   if (lastRow + 1 <= meta.rowCount) {
     await writeRetry(() => api.spreadsheets.values.batchClear({
       spreadsheetId,
@@ -274,5 +290,28 @@ export async function writeDestination(api, { rows, regions }, { retryDelays = W
     }, writeOpts), "Bersihkan sisa baris lama");
   }
 
-  return { sheetId: meta.sheetId, lastRow };
+  // 4) Format kolom tanggal (disamakan dengan format yang sudah ada di Nationwide): hanya untuk baris BARU di bawah
+  //    baris terakhir run sebelumnya. Format baris lama tetap melekat karena nilai ditulis RAW. Kalau baris terakhir
+  //    sebelumnya tidak diketahui, format FORMAT_FALLBACK_ROWS baris terakhir. Tidak wajib: gagal = peringatan saja.
+  const warnings = [];
+  const fmtFrom = Number.isFinite(prevLastRow) ? prevLastRow + 1 : Math.max(firstRow, lastRow - FORMAT_FALLBACK_ROWS + 1);
+  if (fmtFrom <= lastRow) {
+    try {
+      await withRetry(() => api.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: DATE_COLUMNS.map((c) => ({
+          repeatCell: {
+            range: { sheetId: meta.sheetId, startRowIndex: fmtFrom - 1, endRowIndex: lastRow, startColumnIndex: c.index, endColumnIndex: c.index + 1 },
+            cell: { userEnteredFormat: { numberFormat: { type: c.type, pattern: c.pattern } } },
+            fields: "userEnteredFormat.numberFormat",
+          },
+        })) },
+      }, { timeout: FORMAT_TIMEOUT_MS }), "Format kolom tanggal", 2, [5000]);
+    } catch (e) {
+      console.warn(`⚠️ Format tanggal baris ${fmtFrom}-${lastRow} gagal (data tetap tertulis): ${e.message}`);
+      warnings.push(`Format tanggal baris ${fmtFrom}-${lastRow} gagal (${describeError(e)}); data tetap tertulis, hanya tampilan tanggal baris itu yang mungkin belum rapi`);
+    }
+  }
+
+  return { sheetId: meta.sheetId, lastRow, warnings };
 }
