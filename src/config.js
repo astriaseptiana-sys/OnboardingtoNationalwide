@@ -15,7 +15,8 @@ export const REGION_SPLIT = {
   source: "Jabodetabek & Banten",
   mapTab: "Region",
   hubIndex: 9, // nama_hub = kolom J di A:O
-  regions: ["West Jabo", "South Jabo", "East Jabo", "North Jabo"],
+  // Skema tab Region sekarang: West Jabo (Banten) dan Jabodetabek (sisanya). Nilai lain untuk hub sumber ini dianggap belum terpetakan.
+  regions: ["West Jabo", "Jabodetabek"],
   totalName: "Total Jabo", // baris subtotal (semua baris sumber, termasuk hub yang belum terpetakan)
 };
 
