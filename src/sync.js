@@ -51,7 +51,7 @@ async function runOnce(attempt) {
     console.log(r.ok ? `✅ ${r.name}: ${fmtRibuan(r.rows.length)} baris (${r.dropped} baris kosong dilewati)` : `❌ ${r.name}: ${r.error}`);
   }
 
-  // Pecah sumber Jabodetabek per hub (West Jabo dan Jabodetabek). Peta gagal dibaca -> tetap sync dengan label
+  // Pecah sumber Jabodetabek per hub (West/South/East/North Jabo, dari provinsi + kota hub). Peta gagal dibaca -> tetap sync dengan label
   // sumber asli; semua baris Jabo terhitung "belum terpetakan" dan muncul sebagai peringatan di laporan.
   // Peta hub dan data run sebelumnya (kolom X, untuk perbandingan di laporan) dibaca bersamaan dengan batas waktu;
   // keduanya pelengkap, jadi kalau lambat/gagal sync tetap jalan tanpa menunggu lama (dan permintaannya dibatalkan).

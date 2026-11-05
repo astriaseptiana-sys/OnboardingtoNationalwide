@@ -115,14 +115,19 @@ export async function readSource(api, source) {
   }
 }
 
-// Peta nama hub (huruf kecil) -> region untuk region yang dipecah, dari baris tab Region (Station Name, For Nationwide, ...).
+// Peta nama hub (huruf kecil) -> area untuk sumber yang dipecah, dari baris tab Region (Station Name, For Nationwide, L1, L2).
+// Area ditentukan dari provinsi + kota hub (split.cityAreas). Kalau kota tidak ada di daftar, nilai "For Nationwide" dipakai
+// selama nilainya salah satu area yang dipecah.
 export function hubMapFromRows(regionRows, split = REGION_SPLIT) {
   const wanted = new Set(split.regions);
+  const cityAreas = new Map(Object.entries(split.cityAreas ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
   const map = new Map();
   for (const r of regionRows) {
     const hub = String(r[0] ?? "").trim().toLowerCase();
-    const region = String(r[1] ?? "").trim();
-    if (hub && wanted.has(region)) map.set(hub, region);
+    if (!hub) continue;
+    const cityKey = `${String(r[2] ?? "").trim()}|${String(r[3] ?? "").trim()}`.toLowerCase();
+    const region = cityAreas.get(cityKey) ?? String(r[1] ?? "").trim();
+    if (wanted.has(region)) map.set(hub, region);
   }
   return map;
 }

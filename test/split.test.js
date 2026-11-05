@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { REGION_SPLIT as ACTIVE_SPLIT } from "../src/config.js";
-// Tes pemecahan umum memakai skema empat pecahan (logika pemecahan generik); skema aktif dites di bagian akhir.
-const REGION_SPLIT = { ...ACTIVE_SPLIT, regions: ["West Jabo", "South Jabo", "East Jabo", "North Jabo"] };
+import { REGION_SPLIT } from "../src/config.js";
 import { successEntry } from "../src/log.js";
 import { buildPanel } from "../src/panel.js";
 import { hubMapFromRows, readRegionMap } from "../src/sheets.js";
@@ -108,17 +106,23 @@ test("buildPanel: Total Jabo dari jumlah label di Sumber_Region (4 pecahan + lab
 test("readRegionMap: hanya region yang dipecah, nama hub huruf kecil", async () => {
   const api = { spreadsheets: { values: { get: async (req) => {
     assert.equal(req.range, "'Region'!A2:D"); // A:D: Station Name, For Nationwide, L1, L2 (dipakai juga untuk mode trial)
-    return { data: { values: [["Anyar Hub", "West Jabo"], ["Abang Hub", "Bali-Nusra"], [" Babelan 2 Hub ", "Jabodetabek"], ["", "West Jabo"], ["Andir Hub", "South Jabo"]] } };
+    return { data: { values: [["Anyar Hub", "West Jabo"], ["Abang Hub", "Bali-Nusra"], [" Babelan 2 Hub ", "East Jabo"], ["", "West Jabo"]] } };
   } } } };
   const m = await readRegionMap(api);
-  assert.deepEqual([...m.entries()], [["anyar hub", "West Jabo"], ["babelan 2 hub", "Jabodetabek"]]); // South Jabo bukan pecahan sumber ini
+  assert.deepEqual([...m.entries()], [["anyar hub", "West Jabo"], ["babelan 2 hub", "East Jabo"]]);
 });
 
-test("skema aktif (West Jabo + Jabodetabek): hub dipetakan sesuai tab Region, nilai lain dan hub tak dikenal = belum terpetakan", () => {
-  assert.deepEqual(ACTIVE_SPLIT.regions, ["West Jabo", "Jabodetabek"]);
-  const map = hubMapFromRows([["Anyar Hub", "West Jabo"], ["Babelan 2 Hub", "Jabodetabek"], ["Andir Hub", "South Jabo"]], ACTIVE_SPLIT);
-  const r = splitResult(jabo(["Anyar Hub", "Babelan 2 Hub", "Babelan 2 Hub", "Andir Hub", "Hub Baru"]), map, ACTIVE_SPLIT);
-  assert.deepEqual(r.rowLabels, ["Region West Jabo", "Region Jabodetabek", "Region Jabodetabek", "Region Jabodetabek & Banten", "Region Jabodetabek & Banten"]);
-  assert.deepEqual(r.split.labels.map((l) => [l.name, l.count]), [["West Jabo", 1], ["Jabodetabek", 2]]);
-  assert.equal(r.split.unmapped, 2);
+
+test("hubMapFromRows: area dari provinsi + kota (cityAreas), bukan dari For Nationwide yang hanya per provinsi", () => {
+  const map = hubMapFromRows([
+    ["Anyar Hub", "West Jabo", "BANTEN", "KAB. SERANG"],
+    ["Babakan Madang Hub", "Jabodetabek", "JAWA BARAT", "KAB. BOGOR"],       // For Nationwide "Jabodetabek", kota Bogor -> South
+    ["Cakung Hub", "Jabodetabek", "DKI JAKARTA", "KOTA JAKARTA TIMUR"],      // East
+    ["Cengkareng 3 Hub", "Jabodetabek", "dki jakarta", " kota jakarta barat "], // huruf besar/kecil dan spasi tidak masalah -> North
+    ["Andir Hub", "South Jabo", "JAWA BARAT", "KOTA BANDUNG"],              // kota bukan Jabo; nilai South Jabo dari master -> tetap South (fallback)
+    ["Abang Hub", "Bali-Nusra", "BALI", "KAB. KARANGASEM"],                  // bukan Jabo -> tidak ikut
+  ]);
+  assert.deepEqual([...map.entries()], [["anyar hub", "West Jabo"], ["babakan madang hub", "South Jabo"], ["cakung hub", "East Jabo"], ["cengkareng 3 hub", "North Jabo"], ["andir hub", "South Jabo"]]);
+  assert.equal(REGION_SPLIT.cityAreas["BANTEN|KOTA TANGERANG SELATAN"], "South Jabo");
+  assert.equal(Object.keys(REGION_SPLIT.cityAreas).length, 20);
 });

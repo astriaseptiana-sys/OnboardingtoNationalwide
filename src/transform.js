@@ -43,7 +43,7 @@ export function cleanRows(rawRows, width) {
 }
 
 // Gabung baris semua sumber yang sukses; kolom X diisi nama region sumbernya
-// (atau label hasil pecahan per hub kalau sumbernya dipecah, mis. Jabodetabek & Banten -> West Jabo dan Jabodetabek).
+// (atau label hasil pecahan per hub kalau sumbernya dipecah, mis. Jabodetabek & Banten -> West/South/East/North Jabo).
 export function buildOutput(results) {
   const rows = [];
   const regions = [];

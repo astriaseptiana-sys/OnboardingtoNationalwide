@@ -10,13 +10,25 @@ export const SOURCES = [
 ];
 
 // Sumber yang dipecah per hub: kolom Sumber_Region (X) berisi "Region West Jabo", "Region South Jabo", dst.
-// Peta hub -> region dibaca dari tab Region di BPO Tracker (kolom A = Station Name, kolom B = For Nationwide).
+// Peta hub -> region dibaca dari tab Region di BPO Tracker (A = Station Name, B = For Nationwide, C = L1 Address/provinsi, D = L2 Address/kota).
 export const REGION_SPLIT = {
   source: "Jabodetabek & Banten",
   mapTab: "Region",
   hubIndex: 9, // nama_hub = kolom J di A:O
-  // Skema tab Region sekarang: West Jabo (Banten) dan Jabodetabek (sisanya). Nilai lain untuk hub sumber ini dianggap belum terpetakan.
-  regions: ["West Jabo", "Jabodetabek"],
+  regions: ["West Jabo", "South Jabo", "East Jabo", "North Jabo"],
+  // Area ditentukan dari PROVINSI + KOTA hub (kolom C dan D tab Region), bukan dari kolom "For Nationwide" yang di master hanya
+  // dibagi per provinsi. Daftar ini = tab "Split Jabo" di file Station Network Planning - CM dengan area MAYORITAS per kota
+  // (beberapa kota di tab itu punya area campuran per hub, mis. Jakarta Selatan: South 18, East 12, North 3).
+  cityAreas: {
+    "BANTEN|KAB. LEBAK": "West Jabo", "BANTEN|KAB. PANDEGLANG": "West Jabo", "BANTEN|KAB. SERANG": "West Jabo",
+    "BANTEN|KAB. TANGERANG": "West Jabo", "BANTEN|KOTA CILEGON": "West Jabo", "BANTEN|KOTA SERANG": "West Jabo",
+    "BANTEN|KOTA TANGERANG": "West Jabo", "BANTEN|KOTA TANGERANG SELATAN": "South Jabo",
+    "DKI JAKARTA|KAB. KEPULAUAN SERIBU": "North Jabo", "DKI JAKARTA|KOTA JAKARTA BARAT": "North Jabo",
+    "DKI JAKARTA|KOTA JAKARTA PUSAT": "East Jabo", "DKI JAKARTA|KOTA JAKARTA SELATAN": "South Jabo",
+    "DKI JAKARTA|KOTA JAKARTA TIMUR": "East Jabo", "DKI JAKARTA|KOTA JAKARTA UTARA": "North Jabo",
+    "JAWA BARAT|KAB. BEKASI": "East Jabo", "JAWA BARAT|KAB. BOGOR": "South Jabo", "JAWA BARAT|KAB. KARAWANG": "East Jabo",
+    "JAWA BARAT|KOTA BEKASI": "East Jabo", "JAWA BARAT|KOTA BOGOR": "South Jabo", "JAWA BARAT|KOTA DEPOK": "South Jabo",
+  },
   totalName: "Total Jabo", // baris subtotal (semua baris sumber, termasuk hub yang belum terpetakan)
 };
 
