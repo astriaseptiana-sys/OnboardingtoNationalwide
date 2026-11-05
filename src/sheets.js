@@ -220,6 +220,21 @@ export async function appendLogRow(api, row, { signal } = {}) {
   }
 }
 
+// Seperti appendLogRow, tetapi untuk percobaan ULANG: kalau baris teratas LOG sudah memuat waktu yang sama (percobaan sebelumnya
+// ternyata sempat masuk sebelum dibatalkan), tidak ditulis lagi supaya tidak ganda. Gagal mengecek tidak menghalangi penulisan.
+export async function appendLogRowOnce(api, row, { signal } = {}) {
+  try {
+    const res = await retryLong(() => api.spreadsheets.values.get({
+      spreadsheetId: DEST.spreadsheetId, range: `'${LOG_TAB}'!A2:A2`, valueRenderOption: "UNFORMATTED_VALUE",
+    }, reqOpts(WRITE_TIMEOUT_MS, signal)), "Cek baris LOG teratas", signal);
+    const top = res.data.values?.[0]?.[0];
+    if (typeof top === "number" && Math.abs(top - row[0]) < 1e-9) return { ok: true, already: true };
+  } catch (e) {
+    console.warn(`⚠️ Tidak bisa cek baris LOG teratas, tetap mencoba menulis: ${e.message}`);
+  }
+  return appendLogRow(api, row, { signal });
+}
+
 // Tulis data ke tab tujuan (Nationwide): A:O + X saja. Data baru ditulis dulu, baru sisa baris lama di bawahnya
 // dibersihkan, jadi tab tidak sempat kosong. Kolom P:W (rumus) tidak disentuh.
 export async function writeDestination(api, { rows, regions }, { retryDelays = WRITE_RETRY_DELAYS_MS, prevLastRow } = {}) {

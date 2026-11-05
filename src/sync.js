@@ -4,7 +4,7 @@ import { sendSeaTalk } from "./seatalk.js";
 import { failureEntry, successEntry } from "./log.js";
 import { buildPanel, setPanelBusy, setPanelError, updateControlPanel } from "./panel.js";
 import {
-  appendLogRow, createClient, readPreviousColumn, readRegionMap, readSource, verifyLastRow, writeDestination,
+  appendLogRow, appendLogRowOnce, createClient, readPreviousColumn, readRegionMap, readSource, verifyLastRow, writeDestination,
 } from "./sheets.js";
 import { runTrial } from "./trial-run.js";
 import { buildFailureReport, buildOutput, buildReport, fmtRibuan, splitResult, summarize, tallyRegions } from "./transform.js";
@@ -21,6 +21,9 @@ const t0 = Date.now();
 
 // Batas total untuk pekerjaan kecil sesudah data utama (Control Panel, LOG, cek baris terakhir), agar run tidak molor.
 const POST_WRITE_BUDGET_MS = 90_000;
+// Putaran kedua HANYA untuk Control Panel/LOG yang gagal di putaran pertama (Google sering masih sibuk menghitung ulang rumus
+// sesudah penulisan data besar). Tidak jalan sama sekali kalau putaran pertama berhasil, jadi run normal tidak bertambah lama.
+const SECOND_PASS_BUDGET_MS = 180_000;
 // Batas untuk pembacaan pelengkap sebelum penulisan data (peta hub, data run sebelumnya).
 const PRE_READ_BUDGET_MS = 45_000;
 // Batas untuk penanda "Sedang Diproses" di awal run.
@@ -111,14 +114,24 @@ async function runOnce(attempt) {
       }
       return updateControlPanel(api, buildPanel(summary, { sheetCounts }), { signal });
     };
+    const logRow = successEntry(summary, out.rows.length, { attempt }); // dibuat sekali: waktu yang sama dipakai kalau LOG dicoba ulang
     const [panelJob, logJob, verifyJob] = await Promise.all([
       bounded(panelTask, POST_WRITE_BUDGET_MS),
-      bounded((signal) => appendLogRow(api, successEntry(summary, out.rows.length, { attempt }), { signal }), POST_WRITE_BUDGET_MS),
+      bounded((signal) => appendLogRow(api, logRow, { signal }), POST_WRITE_BUDGET_MS),
       bounded((signal) => verifyLastRow(api, written.lastRow, { signal }), POST_WRITE_BUDGET_MS),
     ]);
-    const panelRes = unwrap(panelJob);
-    const logRes = unwrap(logJob);
+    let panelRes = unwrap(panelJob);
+    let logRes = unwrap(logJob);
     const verifyRes = unwrap(verifyJob);
+    if (!panelRes.ok || !logRes.ok) {
+      console.log(`Putaran pertama gagal untuk ${[!panelRes.ok && "Control Panel", !logRes.ok && "LOG"].filter(Boolean).join(" dan ")}; mencoba sekali lagi (maks ${SECOND_PASS_BUDGET_MS / 1000} dtk)...`);
+      const [panel2, log2] = await Promise.all([
+        panelRes.ok ? { ok: true, value: panelRes } : bounded(panelTask, SECOND_PASS_BUDGET_MS),
+        logRes.ok ? { ok: true, value: logRes } : bounded((signal) => appendLogRowOnce(api, logRow, { signal }), SECOND_PASS_BUDGET_MS),
+      ]);
+      panelRes = unwrap(panel2);
+      logRes = unwrap(log2);
+    }
     if (!panelRes.ok) warnings.push(`Control Panel gagal diisi (${panelRes.error})`);
     else if (panelRes.missing?.length) warnings.push(`Baris tidak ditemukan di Control Panel: ${panelRes.missing.join(", ")}`);
     if (!logRes.ok) warnings.push(`Tab LOG gagal dicatat (${logRes.error})`);

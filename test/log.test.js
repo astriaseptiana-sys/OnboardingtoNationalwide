@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildLogRow, failureEntry, successEntry, toSheetSerial, windowLabel } from "../src/log.js";
-import { appendLogRow, PartialWriteError } from "../src/sheets.js";
+import { appendLogRow, appendLogRowOnce, PartialWriteError } from "../src/sheets.js";
 import { summarize } from "../src/transform.js";
 
 test("toSheetSerial: jam dinding WIB, cocok dengan baris LOG asli (28 Okt 2026 20:56:27 = 46323,87253...)", () => {
@@ -76,4 +76,33 @@ test("appendLogRow: tab LOG tidak ada -> false, tidak throw", async () => {
   const res = await appendLogRow(api, [1, "a", "b", 0, ""]);
   assert.equal(res.ok, false);
   assert.ok(res.error.includes("HTTP 404") && res.error.includes("tidak ditemukan"));
+});
+
+test("appendLogRowOnce: baris teratas sudah memuat waktu yang sama -> tidak ditulis lagi (tanpa duplikat)", async () => {
+  const calls = [];
+  const api = { spreadsheets: {
+    get: async () => ({ data: { sheets: [{ properties: { sheetId: 99, title: "LOG" } }] } }),
+    values: { get: async () => ({ data: { values: [[46327.52556048611]] } }) },
+    batchUpdate: async (req) => { calls.push(req); return {}; },
+  } };
+  assert.deepEqual(await appendLogRowOnce(api, [46327.52556048611, "Malam", "✅ SUKSES", 125385, ""]), { ok: true, already: true });
+  assert.equal(calls.length, 0);
+});
+
+test("appendLogRowOnce: waktu berbeda atau cek gagal -> tetap ditulis", async () => {
+  const mk = (getImpl) => {
+    const calls = [];
+    return { calls, api: { spreadsheets: {
+      get: async () => ({ data: { sheets: [{ properties: { sheetId: 99, title: "LOG" } }] } }),
+      values: { get: getImpl },
+      batchUpdate: async (req) => { calls.push(req); return {}; },
+    } } };
+  };
+  const row = [46330.1, "Siang", "✅ SUKSES", 1, ""];
+  const a = mk(async () => ({ data: { values: [[46327.5]] } }));
+  assert.deepEqual(await appendLogRowOnce(a.api, row), { ok: true });
+  assert.equal(a.calls.length, 1);
+  const b = mk(async () => { throw Object.assign(new Error("timeout"), { status: 400 }); });
+  assert.deepEqual(await appendLogRowOnce(b.api, row), { ok: true });
+  assert.equal(b.calls.length, 1);
 });

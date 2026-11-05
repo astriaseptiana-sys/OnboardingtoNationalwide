@@ -130,9 +130,11 @@ export function summarize(results, prevCounts) {
     const prev = labels.reduce((a, l) => a + (prevCounts?.[l] ?? 0), 0);
     const count = r.ok ? r.rows.length : null;
     let status = "ok";
+    const drop = r.ok && prev > 0 && (count - prev) / prev <= -ANOMALY_DROP;
     if (!r.ok) status = "error";
-    else if ((prev > 0 && (count - prev) / prev <= -ANOMALY_DROP) || r.split.unmapped > 0) status = "anomaly";
+    else if (drop || r.split.unmapped > 0) status = "anomaly";
     return {
+      drop, // penurunan >= 30% (dipakai panel yang tidak menganggap "belum terpetakan" sebagai anomali)
       name: totalName,
       source: r.name,
       labels,

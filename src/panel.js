@@ -55,7 +55,10 @@ export function buildPanel(summary, { finishedAt = new Date(), sheetCounts = nul
   const total = sheetCounts ? Object.values(sheetCounts).reduce((a, b) => a + b, 0) : summary.total;
 
   // Subtotal (mis. Total Jabo): jumlah label pecahan + label sumber asli di Sumber_Region
-  const groups = (summary.groups ?? []).map((g) => {
+  // Aturan khusus Control Panel: baris yang belum terpetakan (hub belum ada di tab Region) TIDAK dianggap anomali; barisnya tetap
+  // dihitung di subtotal (label sumber asli) dan jumlahnya disebut di kartu status. Laporan SeaTalk dan LOG tetap menandainya.
+  const groups = (summary.groups ?? []).map((g0) => {
+    const g = g0.status === "anomaly" && !g0.drop ? { ...g0, status: "ok" } : g0;
     if (!sheetCounts || g.status === "error") return { ...g, rows: g.count };
     const rows = g.labels.reduce((a, l) => a + (sheetCounts[l] ?? 0), 0);
     return { ...g, rows, status: rows !== g.count ? "mismatch" : g.status, expected: g.count };
@@ -63,7 +66,7 @@ export function buildPanel(summary, { finishedAt = new Date(), sheetCounts = nul
 
   const hasError = items.some((i) => i.status === "error");
   const unmapped = summary.unmapped ?? 0;
-  const hasAnomaly = unmapped > 0 || [...items, ...groups].some((i) => i.status === "anomaly" || i.status === "mismatch");
+  const hasAnomaly = [...items, ...groups].some((i) => i.status === "anomaly" || i.status === "mismatch");
   const overallKey = hasError ? "error" : hasAnomaly ? "anomaly" : "ok";
   const overall = hasError ? "❌ ADA ERROR" : hasAnomaly ? "⚠️ PERLU DICEK" : "✅ All STABLE";
 

@@ -68,7 +68,9 @@ test("buildPanel: empat baris Jabo dari Sumber_Region, total dari semua label te
   assert.deepEqual(Object.keys(p.regions), ["West Jabo", "South Jabo", "East Jabo", "North Jabo", "Total Jabo"]);
   assert.equal(p.regions["West Jabo"].rows, 2);
   assert.equal(p.total, 6);
-  assert.equal(p.status.text, "⚠️ PERLU DICEK — 1 baris Jabo belum terpetakan");
+  // aturan khusus panel: belum terpetakan bukan anomali, hanya disebut di kartu status
+  assert.equal(p.status.text, "✅ All STABLE — 1 baris Jabo belum terpetakan");
+  assert.equal(p.regions["Total Jabo"].status, "✅ STABLE");
 });
 
 test("summarize: Total Jabo = semua baris sumber termasuk tak terpetakan; dibandingkan dengan Jabodetabek gabungan run lama", () => {
@@ -125,4 +127,15 @@ test("hubMapFromRows: area dari provinsi + kota (cityAreas), bukan dari For Nati
   assert.deepEqual([...map.entries()], [["anyar hub", "West Jabo"], ["babakan madang hub", "South Jabo"], ["cakung hub", "East Jabo"], ["cengkareng 3 hub", "North Jabo"], ["andir hub", "South Jabo"]]);
   assert.equal(REGION_SPLIT.cityAreas["BANTEN|KOTA TANGERANG SELATAN"], "South Jabo");
   assert.equal(Object.keys(REGION_SPLIT.cityAreas).length, 20);
+});
+
+test("panel: Total Jabo yang turun >= 30% tetap Anomali walaupun aturan belum-terpetakan tidak lagi menandai", () => {
+  const r = splitResult(jabo(["Anyar Hub", "Hub Baru"]), hubMap, REGION_SPLIT);
+  const s = summarize([r], { "Region West Jabo": 100, "Region Jabodetabek & Banten": 0 }); // 2 baris vs 100 sebelumnya
+  assert.equal(s.groups[0].drop, true);
+  const p = buildPanel(s, { sheetCounts: { "Region West Jabo": 1, "Region Jabodetabek & Banten": 1 } });
+  assert.equal(p.regions["Total Jabo"].status, "⚠️ Anomali");
+  assert.match(p.status.text, /PERLU DICEK/);
+  // tetapi SeaTalk/LOG tetap menandai hub belum terpetakan
+  assert.equal(summarize([splitResult(jabo(["Hub Baru"]), hubMap, REGION_SPLIT)], null).overall, "⚠️ PERLU DICEK");
 });
