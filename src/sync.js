@@ -1,10 +1,11 @@
 import { ATTEMPT_PAUSE_MS, DEST, MAX_ATTEMPTS, REGION_SPLIT, SOURCES } from "./config.js";
 import { bounded } from "./deadline.js";
+import { writePanelAndLog } from "./prewrite.js";
 import { sendSeaTalk } from "./seatalk.js";
-import { failureEntry, successEntry } from "./log.js";
-import { buildPanel, setPanelBusy, setPanelError, updateControlPanel } from "./panel.js";
+import { failureEntry } from "./log.js";
+import { setPanelBusy, setPanelError } from "./panel.js";
 import {
-  appendLogRow, appendLogRowOnce, createClient, readPreviousColumn, readRegionMap, readSource, verifyLastRow, writeDestination,
+  appendLogRow, createClient, readPreviousColumn, readRegionMap, readSource, verifyLastRow, writeDestination,
 } from "./sheets.js";
 import { runTrial } from "./trial-run.js";
 import { buildFailureReport, buildOutput, buildReport, fmtRibuan, splitResult, summarize, tallyRegions } from "./transform.js";
@@ -12,11 +13,13 @@ import { buildFailureReport, buildOutput, buildReport, fmtRibuan, splitResult, s
 const dryRun = process.argv.includes("--dry-run") || process.env.DRY_RUN === "true";
 // SKIP_PANEL=true: Control Panel tidak disentuh sama sekali (penanda "Sedang Diproses", pengisian, penanda Error).
 const skipPanel = process.env.SKIP_PANEL === "true";
-// FULL_READBACK=true: baca ulang seluruh kolom Sumber_Region setelah menulis (verifikasi penuh, berat). Bawaan: cek ringan.
+// FULL_READBACK=true: baca ulang seluruh kolom Sumber_Region setelah menulis dan cetak jumlahnya di log (berat). Bawaan: cek ringan.
 const fullReadback = process.env.FULL_READBACK === "true";
 // TRIAL=true: hanya mengisi tab "Sort by New (Trial)" (lihat trial-run.js); tab lain, LOG, panel, SeaTalk tidak disentuh.
 const trialMode = process.env.TRIAL === "true";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let prewriteDone = false; // Control Panel + LOG sudah ditulis di proses ini (sebelum data utama)
+const prewriteWarnings = [];
 const t0 = Date.now();
 
 // Batas total untuk pekerjaan kecil sesudah data utama (Control Panel, LOG, cek baris terakhir), agar run tidak molor.
@@ -85,57 +88,40 @@ async function runOnce(attempt) {
     console.warn(`Tidak bisa baca data sebelumnya: ${prevRes.error}`);
   }
 
+  const summary = summarize(resolved, prevCounts);
   const warnings = [];
   let gid;
   let written = null;
+
+  // Control Panel dan LOG ditulis SEBELUM data utama. Sesudah penulisan data besar Google menghitung ulang rumus Nationwide dan
+  // Sort by New selama beberapa menit, dan penulisan kecil apa pun di file ini terblokir (terbukti timeout di putaran 90 dtk
+  // maupun 180 dtk). Sebelum penulisan, sheet masih tenang dan penulisan kecil selesai dalam hitungan detik. Hasilnya sudah
+  // diketahui dari data sumber. Kalau penulisan data gagal, jalur gagal di bawah menulis LOG GAGAL dan menandai panel Error.
+  // Hanya sekali per proses: percobaan ke-2 tidak menulis ulang.
+  if (!dryRun && !prewriteDone) {
+    prewriteWarnings.push(...await writePanelAndLog(api, {
+      summary, rowCount: out.rows.length, attempt, skipPanel, firstMs: POST_WRITE_BUDGET_MS, secondMs: SECOND_PASS_BUDGET_MS,
+    }));
+    prewriteDone = true;
+  }
+  warnings.push(...prewriteWarnings);
+
   if (!dryRun) {
     written = await writeDestination(api, out, { prevLastRow });
     gid = written.sheetId;
     warnings.push(...(written.warnings ?? []));
     console.log(`Nationwide selesai ditulis sampai row ${written.lastRow}`);
-  }
 
-  const summary = summarize(resolved, prevCounts);
-
-  // Sesudah data utama tertulis: cek baris terakhir, Control Panel, dan LOG dikerjakan BERSAMAAN dengan batas waktu total.
-  // bounded() tidak pernah throw dan membatalkan permintaan yang lewat waktu, jadi apa pun yang terjadi di sini tidak
-  // bisa menggagalkan atau mengulang sync data yang sudah tertulis; yang gagal hanya menjadi peringatan di laporan.
-  if (!dryRun) {
-    const panelTask = async (signal) => {
-      if (skipPanel) return { ok: true, skipped: true };
-      let sheetCounts = null;
-      if (fullReadback) {
-        try {
-          sheetCounts = tallyRegions(await readPreviousColumn(api, { signal }));
-          console.log("Sumber_Region di Nationwide:", JSON.stringify(sheetCounts));
-        } catch (e) {
-          console.warn(`⚠️ Tidak bisa baca ulang Sumber_Region, panel memakai hitungan sync: ${e.message}`);
-        }
-      }
-      return updateControlPanel(api, buildPanel(summary, { sheetCounts }), { signal });
-    };
-    const logRow = successEntry(summary, out.rows.length, { attempt }); // dibuat sekali: waktu yang sama dipakai kalau LOG dicoba ulang
-    const [panelJob, logJob, verifyJob] = await Promise.all([
-      bounded(panelTask, POST_WRITE_BUDGET_MS),
-      bounded((signal) => appendLogRow(api, logRow, { signal }), POST_WRITE_BUDGET_MS),
-      bounded((signal) => verifyLastRow(api, written.lastRow, { signal }), POST_WRITE_BUDGET_MS),
-    ]);
-    let panelRes = unwrap(panelJob);
-    let logRes = unwrap(logJob);
-    const verifyRes = unwrap(verifyJob);
-    if (!panelRes.ok || !logRes.ok) {
-      console.log(`Putaran pertama gagal untuk ${[!panelRes.ok && "Control Panel", !logRes.ok && "LOG"].filter(Boolean).join(" dan ")}; mencoba sekali lagi (maks ${SECOND_PASS_BUDGET_MS / 1000} dtk)...`);
-      const [panel2, log2] = await Promise.all([
-        panelRes.ok ? { ok: true, value: panelRes } : bounded(panelTask, SECOND_PASS_BUDGET_MS),
-        logRes.ok ? { ok: true, value: logRes } : bounded((signal) => appendLogRowOnce(api, logRow, { signal }), SECOND_PASS_BUDGET_MS),
-      ]);
-      panelRes = unwrap(panel2);
-      logRes = unwrap(log2);
-    }
-    if (!panelRes.ok) warnings.push(`Control Panel gagal diisi (${panelRes.error})`);
-    else if (panelRes.missing?.length) warnings.push(`Baris tidak ditemukan di Control Panel: ${panelRes.missing.join(", ")}`);
-    if (!logRes.ok) warnings.push(`Tab LOG gagal dicatat (${logRes.error})`);
+    // Pemeriksaan ringan sesudah menulis (3 sel), dengan batas waktu; gagal = peringatan saja.
+    const verifyRes = unwrap(await bounded((signal) => verifyLastRow(api, written.lastRow, { signal }), POST_WRITE_BUDGET_MS));
     if (!verifyRes.ok) warnings.push(`Pemeriksaan baris terakhir Nationwide tidak lolos (${verifyRes.error})`);
+    if (fullReadback) {
+      try {
+        console.log("Sumber_Region di Nationwide:", JSON.stringify(tallyRegions(await readPreviousColumn(api))));
+      } catch (e) {
+        console.warn(`⚠️ Tidak bisa baca ulang Sumber_Region: ${e.message}`);
+      }
+    }
   }
 
   const report = buildReport(summary, {
